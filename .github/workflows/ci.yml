@@ -1,0 +1,36 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  foundation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: ./mvnw -B verify
+        working-directory: services/api
+      - run: npx playwright install --with-deps chromium
+      - name: Start the local stack
+        run: docker compose --env-file .env.example -f infra/compose.yaml -f infra/compose.dev.yaml up --build --wait
+        env:
+          POSTGRES_PASSWORD: ci-only-ephemeral-password
+      - run: npm run test:e2e
+      - name: Stop the local stack
+        if: always()
+        run: docker compose --env-file .env.example -f infra/compose.yaml -f infra/compose.dev.yaml down --volumes
+        env:
+          POSTGRES_PASSWORD: ci-only-ephemeral-password

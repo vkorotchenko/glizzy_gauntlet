@@ -1,0 +1,39 @@
+{
+  "name": "glizzy-gauntlet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24 <25",
+    "npm": ">=11"
+  },
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail -n web,gateway \"npm run dev -w @glizzy/web\" \"npm run dev -w @glizzy/gateway\"",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "oxlint apps packages tests *.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm test && npm run api:check",
+    "api:generate": "openapi-typescript packages/api-client/openapi.yaml -o packages/api-client/src/schema.d.ts",
+    "api:check": "npm run api:generate -- --check",
+    "test:e2e": "playwright test",
+    "stack:up": "docker compose --env-file .env -f infra/compose.yaml -f infra/compose.dev.yaml up --build -d",
+    "stack:down": "docker compose --env-file .env -f infra/compose.yaml -f infra/compose.dev.yaml down"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^24.19.2",
+    "concurrently": "^9.2.1",
+    "openapi-typescript": "^7.13.0",
+    "oxlint": "^1.88.0",
+    "prettier": "^3.6.2",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

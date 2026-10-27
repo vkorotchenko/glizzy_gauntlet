@@ -1,0 +1,34 @@
+openapi: 3.0.3
+info:
+  title: Glizzy Gauntlet API
+  version: 0.1.0
+servers:
+  - url: /api/v1
+paths:
+  /status:
+    get:
+      operationId: getStatus
+      summary: Check whether the API can reach PostgreSQL
+      responses:
+        '200':
+          description: The API and database are available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+        '503':
+          description: The API cannot reach the database
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+components:
+  schemas:
+    ServiceStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN]

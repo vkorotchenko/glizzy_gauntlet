@@ -1,0 +1,7 @@
+services:
+  db:
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+  gateway:
+    ports:
+      - '127.0.0.1:${GATEWAY_PORT:-3000}:3000'
