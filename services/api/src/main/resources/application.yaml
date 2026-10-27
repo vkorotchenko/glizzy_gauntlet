@@ -13,6 +13,32 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+  session:
+    timeout: 12h
+    jdbc:
+      initialize-schema: never
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail.smtp.auth: ${SMTP_AUTH:false}
+      mail.smtp.starttls.enable: ${SMTP_STARTTLS:false}
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
+app:
+  auth:
+    public-base-url: ${PUBLIC_BASE_URL:http://127.0.0.1:3000}
+    email-enabled: ${EMAIL_ENABLED:false}
+    mail-from: ${MAIL_FROM:}
+    google-enabled: ${GOOGLE_ENABLED:false}
+    google-client-id: ${GOOGLE_CLIENT_ID:}
+    google-client-secret: ${GOOGLE_CLIENT_SECRET:}
 server:
   forward-headers-strategy: none
   error:
@@ -25,6 +51,9 @@ server:
         same-site: lax
         secure: ${COOKIE_SECURE:true}
 management:
+  health:
+    mail:
+      enabled: ${EMAIL_ENABLED:false}
   endpoints:
     web:
       exposure:

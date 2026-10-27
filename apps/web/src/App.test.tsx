@@ -27,7 +27,7 @@ describe('foundation home', () => {
       await screen.findByText('API and database connected'),
     ).toBeInTheDocument()
     expect(fetch.mock.calls[0][0].url).toMatch(/\/api\/v1\/status$/)
-    expect(screen.getByText(/Foundation preview/)).toBeInTheDocument()
+    expect(screen.getByText(/Project preview/)).toBeInTheDocument()
     expect(screen.getByLabelText('Scoring example')).toHaveTextContent(
       'This illustration is not a saved meal.',
     )

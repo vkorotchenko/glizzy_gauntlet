@@ -5,3 +5,21 @@ services:
   gateway:
     ports:
       - '127.0.0.1:${GATEWAY_PORT:-3000}:3000'
+  api:
+    environment:
+      PUBLIC_BASE_URL: http://127.0.0.1:${GATEWAY_PORT:-3000}
+      COOKIE_SECURE: 'false'
+      EMAIL_ENABLED: 'true'
+      MAIL_FROM: no-reply@glizzy.test
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
+      SMTP_AUTH: 'false'
+      SMTP_STARTTLS: 'false'
+    depends_on:
+      mailpit:
+        condition: service_started
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - '127.0.0.1:${MAILPIT_PORT:-8025}:8025'
+    restart: unless-stopped

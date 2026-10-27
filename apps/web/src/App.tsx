@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { createApiClient } from '@glizzy/api-client'
 import { Link, Route, Routes } from 'react-router-dom'
+import { AccountPage, ConfirmLinkPage, SignInPage } from './auth/AuthPages'
 
 function ServiceStatus() {
   const [api] = useState(() =>
@@ -65,7 +66,7 @@ function Home() {
             See the game plan <span aria-hidden="true">&rarr;</span>
           </a>
           <p className="preview-note">
-            Foundation preview. Accounts and competitions are next.
+            Project preview. Sign-in is ready; competitions are next.
           </p>
         </div>
         <div className="score-card" aria-label="Scoring example">
@@ -157,11 +158,16 @@ export default function App() {
           </span>
           Glizzy Gauntlet
         </Link>
-        <span className="build-label">Made for your crew</span>
+        <Link className="account-link" to="/account">
+          My account
+        </Link>
       </header>
       <main id="main">
         <Routes>
           <Route path="/" element={<Home />} />
+          <Route path="/sign-in" element={<SignInPage />} />
+          <Route path="/sign-in/confirm" element={<ConfirmLinkPage />} />
+          <Route path="/account" element={<AccountPage />} />
           <Route
             path="*"
             element={

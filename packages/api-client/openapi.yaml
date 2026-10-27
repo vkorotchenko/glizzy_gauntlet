@@ -5,6 +5,178 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /auth/session:
+    get:
+      operationId: getSession
+      responses:
+        '200':
+          description: Current account, available sign-in methods, and a session-bound CSRF token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInfo'
+  /auth/magic-links:
+    post:
+      operationId: requestMagicLink
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  maxLength: 254
+      responses:
+        '202':
+          description: Request accepted without disclosing delivery or account existence
+        '400':
+          $ref: '#/components/responses/AuthError'
+        '503':
+          $ref: '#/components/responses/AuthError'
+        '403':
+          description: Invalid CSRF token
+  /auth/magic-links/inspect:
+    post:
+      operationId: inspectMagicLink
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/Token'
+      responses:
+        '200':
+          description: Confirmation details; inspecting does not consume the token
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [email, purpose]
+                properties:
+                  email:
+                    type: string
+                    format: email
+                  purpose:
+                    type: string
+                    enum: [sign-in, link]
+        '400':
+          $ref: '#/components/responses/AuthError'
+        '403':
+          description: Invalid CSRF token
+  /auth/magic-links/confirm:
+    post:
+      operationId: confirmMagicLink
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/Token'
+      responses:
+        '200':
+          description: Signed-in account; the session ID and CSRF token rotate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        '400':
+          $ref: '#/components/responses/AuthError'
+        '409':
+          $ref: '#/components/responses/AuthError'
+        '403':
+          description: Invalid CSRF token
+  /auth/google:
+    post:
+      operationId: startGoogle
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [link]
+              properties:
+                link:
+                  type: boolean
+      responses:
+        '200':
+          description: Session-bound Google sign-in or explicit account-linking intent
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authorizationUrl]
+                properties:
+                  authorizationUrl:
+                    type: string
+                    enum: [/oauth2/authorization/google]
+        '401':
+          $ref: '#/components/responses/AuthError'
+        '409':
+          $ref: '#/components/responses/AuthError'
+        '503':
+          $ref: '#/components/responses/AuthError'
+        '403':
+          description: Invalid CSRF token
+  /auth/logout:
+    post:
+      operationId: logout
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Session invalidated
+        '403':
+          description: Invalid CSRF token
+  /me:
+    get:
+      operationId: getProfile
+      responses:
+        '200':
+          description: Current user's private account profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        '401':
+          description: Not signed in
+    put:
+      operationId: updateProfile
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [displayName]
+              properties:
+                displayName:
+                  type: string
+                  minLength: 1
+                  maxLength: 80
+      responses:
+        '200':
+          description: Updated display name; roles and identity ownership are not editable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        '400':
+          $ref: '#/components/responses/AuthError'
+        '401':
+          description: Not signed in
+        '403':
+          description: Invalid CSRF token
   /status:
     get:
       operationId: getStatus
@@ -23,7 +195,74 @@ paths:
               schema:
                 $ref: '#/components/schemas/ServiceStatus'
 components:
+  parameters:
+    CsrfHeader:
+      name: X-CSRF-TOKEN
+      in: header
+      required: true
+      schema:
+        type: string
+  requestBodies:
+    Token:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [token]
+            properties:
+              token:
+                type: string
+                pattern: '^[A-Za-z0-9_-]{43}$'
+  responses:
+    AuthError:
+      description: Authentication request rejected
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
   schemas:
+    AuthError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    Profile:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, siteOwner, providers]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+        siteOwner:
+          type: boolean
+        providers:
+          type: array
+          items:
+            type: string
+            enum: [google, email]
+    SessionInfo:
+      type: object
+      additionalProperties: false
+      required: [user, csrfToken, csrfHeader, emailEnabled, googleEnabled]
+      properties:
+        user:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/Profile'
+        csrfToken:
+          type: string
+        csrfHeader:
+          type: string
+        emailEnabled:
+          type: boolean
+        googleEnabled:
+          type: boolean
     ServiceStatus:
       type: object
       additionalProperties: false

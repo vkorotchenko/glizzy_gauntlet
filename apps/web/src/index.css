@@ -335,4 +335,99 @@ h3 {
   html {
     scroll-behavior: auto;
   }
+
+  .account-link {
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-underline-offset: 4px;
+  }
+  .auth-card {
+    max-width: 600px;
+    margin: 56px auto 80px;
+    padding: 32px;
+    border: 1px solid #dfd4c2;
+    background: #fffaf0;
+    border-radius: 12px;
+  }
+  .auth-card h1 {
+    font-size: 2.8rem;
+  }
+  .auth-card h2 {
+    font-size: 1.7rem;
+    margin-top: 32px;
+  }
+  .auth-card p {
+    margin: 12px 0;
+    line-height: 1.7;
+    overflow-wrap: anywhere;
+  }
+  .auth-card form {
+    margin-top: 24px;
+  }
+  .auth-card label {
+    display: block;
+    font-size: 0.85rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+  .auth-card input {
+    display: block;
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #b6a48b;
+    border-radius: 5px;
+    background: #fffef9;
+    font: inherit;
+  }
+  .auth-card input:focus-visible {
+    outline: 3px solid #18583d;
+    outline-offset: 3px;
+  }
+  .auth-card .button {
+    margin-top: 16px;
+    border: 0;
+    cursor: pointer;
+  }
+  .auth-card button:disabled {
+    opacity: 0.6;
+    cursor: wait;
+  }
+  .secondary {
+    background: #efe5d2;
+    color: #38281d;
+  }
+  .secondary:hover {
+    background: #e5d7bd;
+  }
+  .form-error {
+    color: #932a23;
+  }
+  .form-notice {
+    background: #e6eddf;
+    padding: 12px;
+    border-radius: 5px;
+  }
+  .form-note,
+  .account-id {
+    color: #74614f;
+    font-size: 0.8rem;
+  }
+  .confirmation-address {
+    font-weight: 800;
+  }
+  .text-link {
+    display: inline-block;
+    margin-top: 16px;
+    text-underline-offset: 4px;
+  }
+  @media (max-width: 760px) {
+    .auth-card {
+      padding: 22px;
+      margin: 32px auto;
+    }
+    .brand {
+      font-size: 1.05rem;
+      gap: 8px;
+    }
+  }
 }

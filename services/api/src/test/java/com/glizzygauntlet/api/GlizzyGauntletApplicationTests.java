@@ -33,6 +33,20 @@ class GlizzyGauntletApplicationTests {
   }
 
   @Test
+  void protectsSessionCookiesByDefault() throws Exception {
+    mvc.perform(get("/api/v1/auth/session"))
+        .andExpect(status().isOk())
+        .andExpect(
+            header()
+                .string(
+                    "Set-Cookie",
+                    org.hamcrest.Matchers.allOf(
+                        org.hamcrest.Matchers.containsString("HttpOnly"),
+                        org.hamcrest.Matchers.containsString("Secure"),
+                        org.hamcrest.Matchers.containsString("SameSite=Lax"))));
+  }
+
+  @Test
   void deniesOtherApiRoutesWithoutOfferingPasswordSignIn() throws Exception {
     mvc.perform(get("/api/v1/me"))
         .andExpect(status().isUnauthorized())
