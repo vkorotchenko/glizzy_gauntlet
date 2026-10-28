@@ -4,6 +4,182 @@
  */
 
 export interface paths {
+    "/competitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listCompetitions"];
+        put?: never;
+        post: operations["createCompetition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getCompetition"];
+        put: operations["updateCompetition"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["publishCompetition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/join": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["joinCompetition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listCompetitionMembers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/members/{user}/exclude": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                user: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["excludeCompetitionMember"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/invitations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listCompetitionInvitations"];
+        put?: never;
+        post: operations["createCompetitionInvitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/invitations/{invitation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                invitation: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["revokeCompetitionInvitation"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competition-invitations/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["inspectCompetitionInvitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competition-invitations/join": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["joinCompetitionInvitation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/session": {
         parameters: {
             query?: never;
@@ -137,6 +313,82 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        CompetitionSettings: {
+            name: string;
+            rules: string;
+            /** @enum {string} */
+            visibility: "PUBLIC" | "PRIVATE";
+            /** @description IANA time-zone ID; numeric UTC offsets alone are not accepted */
+            timeZone: string;
+            /**
+             * Format: date-time
+             * @description ISO 8601 instant, at most millisecond precision; future for creation or settings edits
+             */
+            startsAt: string;
+            /**
+             * Format: date-time
+             * @description ISO 8601 instant after the start, at most millisecond precision
+             */
+            endsAt: string;
+            allowSharedMeals: boolean;
+        };
+        Competition: {
+            name: components["schemas"]["CompetitionSettings"]["name"];
+            rules: components["schemas"]["CompetitionSettings"]["rules"];
+            visibility: components["schemas"]["CompetitionSettings"]["visibility"];
+            timeZone: components["schemas"]["CompetitionSettings"]["timeZone"];
+            /** Format: date-time */
+            startsAt: string;
+            /** Format: date-time */
+            endsAt: string;
+            allowSharedMeals: boolean;
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            submissionClosesAt: string;
+            published: boolean;
+            /** Format: int64 */
+            version: number;
+            /** @enum {string} */
+            phase: "DRAFT" | "SCHEDULED" | "ACTIVE" | "GRACE" | "CLOSED";
+            /** @enum {string} */
+            viewerRole: "NONE" | "MEMBER" | "ORGANIZER";
+            memberCount: number;
+        };
+        CompetitionMember: {
+            /** Format: uuid */
+            id: string;
+            displayName: string;
+            /** @enum {string} */
+            role: "MEMBER" | "ORGANIZER";
+            /** @enum {string} */
+            status: "ACTIVE" | "EXCLUDED";
+        };
+        CompetitionInvitation: {
+            /** Format: uuid */
+            id: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            expiresAt: string;
+            /** Format: date-time */
+            revokedAt: string | null;
+            active: boolean;
+        };
+        InvitationPreview: {
+            /** Format: uuid */
+            competitionId: string;
+            name: string;
+            rules: string;
+            timeZone: string;
+            /** Format: date-time */
+            startsAt: string;
+            /** Format: date-time */
+            endsAt: string;
+            allowSharedMeals: boolean;
+            /** Format: date-time */
+            expiresAt: string;
+        };
         AuthError: {
             error: string;
         };
@@ -160,6 +412,24 @@ export interface components {
         };
     };
     responses: {
+        /** @description Competition metadata and viewer's role, never member activity or private authentication data */
+        Competition: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Competition"];
+            };
+        };
+        /** @description Request rejected; private and draft competitions appear not found to outsiders */
+        CompetitionError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["AuthError"];
+            };
+        };
         /** @description Authentication request rejected */
         AuthError: {
             headers: {
@@ -171,6 +441,8 @@ export interface components {
         };
     };
     parameters: {
+        CompetitionId: string;
+        Page: number;
         CsrfHeader: string;
     };
     requestBodies: {
@@ -187,6 +459,308 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listCompetitions: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                scope?: "public" | "mine";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Published public competitions, or the signed-in user's active memberships and drafts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Competition"][];
+                        hasMore: boolean;
+                    };
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    createCompetition: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompetitionSettings"];
+            };
+        };
+        responses: {
+            201: components["responses"]["Competition"];
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    getCompetition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Competition"];
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    updateCompetition: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: int64 */
+                    version: number;
+                    settings: components["schemas"]["CompetitionSettings"];
+                };
+            };
+        };
+        responses: {
+            200: components["responses"]["Competition"];
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    publishCompetition: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: int64 */
+                    version: number;
+                };
+            };
+        };
+        responses: {
+            200: components["responses"]["Competition"];
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    joinCompetition: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Competition"];
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    listCompetitionMembers: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Member-only directory; no emails, identities, or other competitions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["CompetitionMember"][];
+                        hasMore: boolean;
+                    };
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    excludeCompetitionMember: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Excluded from joining and member access; action and reason audited */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    listCompetitionInvitations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Organizer-only metadata, active invitations first, at most 50; no bearer tokens */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompetitionInvitation"][];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    createCompetitionInvitation: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Link shown once; reusable until revoked, seven days, or eating ends, whichever comes first */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                        /** Format: uri */
+                        inviteUrl: string;
+                        /** Format: date-time */
+                        expiresAt: string;
+                    };
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    revokeCompetitionInvitation: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                invitation: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invitation revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    inspectCompetitionInvitation: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["Token"];
+        responses: {
+            /** @description Limited preview for an invitation holder; does not join or reveal members */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationPreview"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    joinCompetitionInvitation: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["Token"];
+        responses: {
+            200: components["responses"]["Competition"];
+            default: components["responses"]["CompetitionError"];
+        };
+    };
     getSession: {
         parameters: {
             query?: never;

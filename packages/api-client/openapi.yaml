@@ -5,6 +5,261 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /competitions:
+    get:
+      operationId: listCompetitions
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum: [public, mine]
+            default: public
+      responses:
+        '200':
+          description: Published public competitions, or the signed-in user's active memberships and drafts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Competition'
+                  hasMore:
+                    type: boolean
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    post:
+      operationId: createCompetition
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompetitionSettings'
+      responses:
+        '201':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getCompetition
+      responses:
+        '200':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    put:
+      operationId: updateCompetition
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version, settings]
+              properties:
+                version:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                settings:
+                  $ref: '#/components/schemas/CompetitionSettings'
+      responses:
+        '200':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/publish:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    post:
+      operationId: publishCompetition
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version]
+              properties:
+                version:
+                  type: integer
+                  format: int64
+                  minimum: 0
+      responses:
+        '200':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/join:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    post:
+      operationId: joinCompetition
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/members:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: listCompetitionMembers
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Member-only directory; no emails, identities, or other competitions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CompetitionMember'
+                  hasMore:
+                    type: boolean
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/members/{user}/exclude:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+      - name: user
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: excludeCompetitionMember
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+      responses:
+        '204':
+          description: Excluded from joining and member access; action and reason audited
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/invitations:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: listCompetitionInvitations
+      responses:
+        '200':
+          description: Organizer-only metadata, active invitations first, at most 50; no bearer tokens
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CompetitionInvitation'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    post:
+      operationId: createCompetitionInvitation
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '201':
+          description: Link shown once; reusable until revoked, seven days, or eating ends, whichever comes first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, inviteUrl, expiresAt]
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  inviteUrl:
+                    type: string
+                    format: uri
+                  expiresAt:
+                    type: string
+                    format: date-time
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/invitations/{invitation}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+      - name: invitation
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: revokeCompetitionInvitation
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Invitation revoked
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competition-invitations/inspect:
+    post:
+      operationId: inspectCompetitionInvitation
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/Token'
+      responses:
+        '200':
+          description: Limited preview for an invitation holder; does not join or reveal members
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvitationPreview'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competition-invitations/join:
+    post:
+      operationId: joinCompetitionInvitation
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/Token'
+      responses:
+        '200':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
   /auth/session:
     get:
       operationId: getSession
@@ -196,6 +451,21 @@ paths:
                 $ref: '#/components/schemas/ServiceStatus'
 components:
   parameters:
+    CompetitionId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        default: 0
+        minimum: 0
+        maximum: 1000
     CsrfHeader:
       name: X-CSRF-TOKEN
       in: header
@@ -216,6 +486,18 @@ components:
                 type: string
                 pattern: '^[A-Za-z0-9_-]{43}$'
   responses:
+    Competition:
+      description: Competition metadata and viewer's role, never member activity or private authentication data
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Competition'
+    CompetitionError:
+      description: Request rejected; private and draft competitions appear not found to outsiders
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
     AuthError:
       description: Authentication request rejected
       content:
@@ -223,6 +505,160 @@ components:
           schema:
             $ref: '#/components/schemas/AuthError'
   schemas:
+    CompetitionSettings:
+      type: object
+      additionalProperties: false
+      required:
+        [name, rules, visibility, timeZone, startsAt, endsAt, allowSharedMeals]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        rules:
+          type: string
+          maxLength: 5000
+        visibility:
+          type: string
+          enum: [PUBLIC, PRIVATE]
+        timeZone:
+          type: string
+          maxLength: 80
+          description: IANA time-zone ID; numeric UTC offsets alone are not accepted
+        startsAt:
+          type: string
+          format: date-time
+          description: ISO 8601 instant, at most millisecond precision; future for creation or settings edits
+        endsAt:
+          type: string
+          format: date-time
+          description: ISO 8601 instant after the start, at most millisecond precision
+        allowSharedMeals:
+          type: boolean
+    Competition:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          name,
+          rules,
+          visibility,
+          timeZone,
+          startsAt,
+          endsAt,
+          allowSharedMeals,
+          submissionClosesAt,
+          published,
+          version,
+          phase,
+          viewerRole,
+          memberCount,
+        ]
+      properties:
+        name:
+          $ref: '#/components/schemas/CompetitionSettings/properties/name'
+        rules:
+          $ref: '#/components/schemas/CompetitionSettings/properties/rules'
+        visibility:
+          $ref: '#/components/schemas/CompetitionSettings/properties/visibility'
+        timeZone:
+          $ref: '#/components/schemas/CompetitionSettings/properties/timeZone'
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        allowSharedMeals:
+          type: boolean
+        id:
+          type: string
+          format: uuid
+        submissionClosesAt:
+          type: string
+          format: date-time
+        published:
+          type: boolean
+        version:
+          type: integer
+          format: int64
+        phase:
+          type: string
+          enum: [DRAFT, SCHEDULED, ACTIVE, GRACE, CLOSED]
+        viewerRole:
+          type: string
+          enum: [NONE, MEMBER, ORGANIZER]
+        memberCount:
+          type: integer
+    CompetitionMember:
+      type: object
+      required: [id, displayName, role, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+        role:
+          type: string
+          enum: [MEMBER, ORGANIZER]
+        status:
+          type: string
+          enum: [ACTIVE, EXCLUDED]
+    CompetitionInvitation:
+      type: object
+      required: [id, createdAt, expiresAt, revokedAt, active]
+      properties:
+        id:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+        active:
+          type: boolean
+    InvitationPreview:
+      type: object
+      required:
+        [
+          competitionId,
+          name,
+          rules,
+          timeZone,
+          startsAt,
+          endsAt,
+          allowSharedMeals,
+          expiresAt,
+        ]
+      properties:
+        competitionId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        rules:
+          type: string
+        timeZone:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        allowSharedMeals:
+          type: boolean
+        expiresAt:
+          type: string
+          format: date-time
     AuthError:
       type: object
       required: [error]

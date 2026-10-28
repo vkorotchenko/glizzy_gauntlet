@@ -3,6 +3,12 @@ import { useQuery } from '@tanstack/react-query'
 import { createApiClient } from '@glizzy/api-client'
 import { Link, Route, Routes } from 'react-router-dom'
 import { AccountPage, ConfirmLinkPage, SignInPage } from './auth/AuthPages'
+import {
+  CompetitionEditorPage,
+  CompetitionPage,
+  CompetitionsPage,
+  InvitationPage,
+} from './competitions/CompetitionPages'
 
 function ServiceStatus() {
   const [api] = useState(() =>
@@ -66,7 +72,8 @@ function Home() {
             See the game plan <span aria-hidden="true">&rarr;</span>
           </a>
           <p className="preview-note">
-            Project preview. Sign-in is ready; competitions are next.
+            Project preview. Accounts and competitions are ready; saved meals
+            and maps are still in development.
           </p>
         </div>
         <div className="score-card" aria-label="Scoring example">
@@ -158,9 +165,14 @@ export default function App() {
           </span>
           Glizzy Gauntlet
         </Link>
-        <Link className="account-link" to="/account">
-          My account
-        </Link>
+        <nav className="header-links" aria-label="Main navigation">
+          <Link className="account-link" to="/competitions">
+            Competitions
+          </Link>
+          <Link className="account-link" to="/account">
+            My account
+          </Link>
+        </nav>
       </header>
       <main id="main">
         <Routes>
@@ -168,6 +180,14 @@ export default function App() {
           <Route path="/sign-in" element={<SignInPage />} />
           <Route path="/sign-in/confirm" element={<ConfirmLinkPage />} />
           <Route path="/account" element={<AccountPage />} />
+          <Route path="/competitions" element={<CompetitionsPage />} />
+          <Route path="/competitions/new" element={<CompetitionEditorPage />} />
+          <Route path="/competitions/:id" element={<CompetitionPage />} />
+          <Route
+            path="/competitions/:id/settings"
+            element={<CompetitionEditorPage />}
+          />
+          <Route path="/join" element={<InvitationPage />} />
           <Route
             path="*"
             element={
