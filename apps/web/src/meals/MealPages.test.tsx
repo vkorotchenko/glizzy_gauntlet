@@ -185,6 +185,7 @@ describe('meal screens', () => {
           totalHundredths: 1900,
           wholeHotDogs: 2,
           withdrawn: false,
+          scoreExcluded: false,
           version: 1,
           acceptsChanges: false,
         },

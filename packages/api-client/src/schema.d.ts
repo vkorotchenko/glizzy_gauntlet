@@ -93,6 +93,133 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/competitions/{id}/recap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getCompetitionRecap"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/recap/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getRecapHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/recap/highlights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getRecapHighlights"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/entries/{entry}/corrections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                entry: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["correctCompetitionScore"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/corrections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getScoreCorrectionAudit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/standings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getCompetitionStandings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getPersonalProgress"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/competitions/{id}/meals": {
         parameters: {
             query?: never;
@@ -649,6 +776,159 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        ResultVersion: {
+            /** Format: int64 */
+            version: number;
+            /** @enum {string} */
+            state: "FINAL" | "REVISED";
+            /** Format: date-time */
+            createdAt: string;
+            calculationVersion: number;
+        };
+        Recap: {
+            result: components["schemas"]["ResultVersion"];
+            /** Format: int64 */
+            participantCount: number;
+            /** Format: int64 */
+            totalHundredths: number;
+            /** Format: int64 */
+            wholeHotDogs: number;
+            standings: components["schemas"]["Standing"][];
+            hasMore: boolean;
+        };
+        RecapHighlights: {
+            /** Format: int64 */
+            resultVersion: number;
+            /** Format: int64 */
+            mealCount: number;
+            /** Format: int64 */
+            venueCount: number;
+            /** Format: int64 */
+            privateLocationCount: number;
+            /** Format: int64 */
+            largestMealHundredths: number;
+            /** Format: date */
+            busiestDay: string | null;
+            /** Format: int64 */
+            busiestDayHundredths: number;
+            timeZone: string;
+            places: {
+                location: string;
+                directoryVenue: boolean;
+                /** Format: int64 */
+                mealCount: number;
+                /** Format: int64 */
+                totalHundredths: number;
+            }[];
+        };
+        ScoreCorrection: {
+            /** Format: uuid */
+            requestId: string;
+            /**
+             * Format: int64
+             * @description Current competition-entry version, not source or result version
+             */
+            version: number;
+            /** Format: int64 */
+            totalHundredths: number;
+            wholeHotDogs: number;
+            /** @description Exclude only from scoring, not membership or existing member-visible snapshots */
+            excluded: boolean;
+            reason: string;
+        };
+        CorrectionReceipt: {
+            /** Format: int64 */
+            resultVersion: number;
+            /** Format: int64 */
+            entryVersion: number;
+        };
+        ScoreCorrectionAudit: {
+            /** Format: uuid */
+            entryId: string;
+            actorDisplayName: string;
+            reason: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: int64 */
+            beforeTotalHundredths: number;
+            beforeWholeHotDogs: number;
+            beforeExcluded: boolean;
+            /** Format: int64 */
+            afterTotalHundredths: number;
+            afterWholeHotDogs: number;
+            afterExcluded: boolean;
+            /** Format: int64 */
+            resultVersion: number;
+        };
+        Standing: {
+            /** Format: int64 */
+            rank: number;
+            displayName: string;
+            /** Format: int64 */
+            totalHundredths: number;
+            /** Format: int64 */
+            wholeHotDogs: number;
+        };
+        Standings: {
+            items: components["schemas"]["Standing"][];
+            hasMore: boolean;
+            provisional: boolean;
+        };
+        ProgressDay: {
+            /** Format: date */
+            date: string;
+            /** Format: int64 */
+            totalHundredths: number;
+            /** Format: int64 */
+            wholeHotDogs: number;
+            /** Format: int64 */
+            mealCount: number;
+            /** Format: int64 */
+            cumulativeHundredths: number;
+        };
+        ProgressPlace: {
+            /** Format: uuid */
+            venueId: string | null;
+            location: string;
+            /** Format: int64 */
+            mealCount: number;
+            /** Format: int64 */
+            totalHundredths: number;
+        };
+        ProgressMeal: {
+            /** Format: uuid */
+            mealId: string;
+            /** Format: uuid */
+            revisionId: string;
+            /** Format: date-time */
+            eatenAt: string;
+            location: string;
+            /** Format: int64 */
+            totalHundredths: number;
+            /** Format: int64 */
+            wholeHotDogs: number;
+        };
+        PersonalProgress: {
+            timeZone: string;
+            provisional: boolean;
+            /** Format: int64 */
+            rank: number;
+            /** Format: int64 */
+            totalHundredths: number;
+            /** Format: int64 */
+            wholeHotDogs: number;
+            /** Format: int64 */
+            mealCount: number;
+            /** Format: int64 */
+            venueCount: number;
+            /** Format: int64 */
+            privateLocationCount: number;
+            days: components["schemas"]["ProgressDay"][];
+            daysHasMore: boolean;
+            places: components["schemas"]["ProgressPlace"][];
+            placesHasMore: boolean;
+            recentMeals: components["schemas"]["ProgressMeal"][];
+        };
         MealItem: {
             name: string;
             wholeQuantity: number;
@@ -713,6 +993,7 @@ export interface components {
             totalHundredths: number;
             wholeHotDogs: number;
             withdrawn: boolean;
+            scoreExcluded: boolean;
             /** Format: int64 */
             version: number;
             acceptsChanges: boolean;
@@ -824,7 +1105,7 @@ export interface components {
             /** Format: int64 */
             version: number;
             /** @enum {string} */
-            phase: "DRAFT" | "SCHEDULED" | "ACTIVE" | "GRACE" | "CLOSED";
+            phase: "DRAFT" | "SCHEDULED" | "ACTIVE" | "GRACE" | "CLOSED" | "FINALIZED" | "REVISED";
             /** @enum {string} */
             viewerRole: "NONE" | "MEMBER" | "ORGANIZER";
             memberCount: number;
@@ -937,6 +1218,8 @@ export interface components {
         };
     };
     parameters: {
+        /** @description Positive result revision; omit for latest */
+        ResultVersion: number;
         CompetitionId: string;
         Page: number;
         CsrfHeader: string;
@@ -1107,6 +1390,196 @@ export interface operations {
             default: components["responses"]["MealError"];
         };
     };
+    getCompetitionRecap: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                /** @description Positive result revision; omit for latest */
+                version?: components["parameters"]["ResultVersion"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Immutable final or revised rankings and totals; public only for published public competitions. Performs idempotent deadline catch-up under the competition lock. No meal details, locations, correction reasons, or account IDs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Recap"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    getRecapHistory: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Twenty immutable result-version descriptors per page, newest first; same visibility and deadline catch-up as recap */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ResultVersion"][];
+                        hasMore: boolean;
+                    };
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    getRecapHighlights: {
+        parameters: {
+            query?: {
+                /** @description Positive result revision; omit for latest */
+                version?: components["parameters"]["ResultVersion"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active members only; submitted snapshot highlights for the specified immutable result revision. Scoring-excluded entries do not contribute. Busiest-day ties choose the earliest local day. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecapHighlights"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    correctCompetitionScore: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                entry: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScoreCorrection"];
+            };
+        };
+        responses: {
+            /** @description Organizer-only after the deadline; atomically audits before/after scores and publishes a new immutable recap revision. Does not change the source meal, measured items, location, photos, other competitions, or a withdrawn entry. Same request key/payload returns the original receipt. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CorrectionReceipt"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    getScoreCorrectionAudit: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active members only; audited reasons and score decisions, twenty per page, newest first. Never part of the public recap projection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ScoreCorrectionAudit"][];
+                        hasMore: boolean;
+                    };
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    getCompetitionStandings: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Public only for published public competitions; otherwise competition visibility applies. Twenty participants per page. Rank uses inches alone (1, 1, 3); active members with no submissions score zero. After finalization, serves the latest immutable result rankings and frozen display names. No account IDs or meal details. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Standings"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    getPersonalProgress: {
+        parameters: {
+            query?: {
+                dayPage?: number;
+                placePage?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current active member's own nonwithdrawn snapshots in this competition only. Thirty calendar days per page, newest window first, ordered chronologically within the page, including zero days; cumulative totals include earlier pages. Competition IANA time zone defines day boundaries. Twenty places and five recent meals; place labels come from submitted revisions. Archived sources still count. No user selector. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonalProgress"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
     getCompetitionMealActivity: {
         parameters: {
             query?: {
@@ -1132,6 +1605,12 @@ export interface operations {
                             id: string;
                             displayName: string;
                             revision: components["schemas"]["MealRevision"];
+                            /** Format: int64 */
+                            version: number;
+                            scoreExcluded: boolean;
+                            /** Format: int64 */
+                            totalHundredths: number;
+                            wholeHotDogs: number;
                         }[];
                         hasMore: boolean;
                     };

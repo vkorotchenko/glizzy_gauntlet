@@ -48,7 +48,9 @@ public class CompetitionService {
     SCHEDULED,
     ACTIVE,
     GRACE,
-    CLOSED
+    CLOSED,
+    FINALIZED,
+    REVISED
   }
 
   public record Settings(
@@ -98,7 +100,12 @@ public class CompetitionService {
       Instant expiresAt) {}
 
   private record Row(
-      UUID id, UUID organizerId, Settings settings, Instant publishedAt, long version) {}
+      UUID id,
+      UUID organizerId,
+      Settings settings,
+      Instant publishedAt,
+      long version,
+      long resultVersion) {}
 
   private record InviteRow(UUID id, UUID competitionId, Instant expiresAt, Instant revokedAt) {}
 
@@ -163,7 +170,8 @@ public class CompetitionService {
     requireOrganizer(row, user);
     Instant now = now();
     checkVersion(row, version);
-    if (row.publishedAt() != null && !now.isBefore(row.settings().startsAt()))
+    if (row.resultVersion() > 0
+        || (row.publishedAt() != null && !now.isBefore(row.settings().startsAt())))
       throw error(HttpStatus.CONFLICT, "SETTINGS_LOCKED");
     validate(settings);
     requireFutureStart(settings, now);
@@ -361,6 +369,7 @@ public class CompetitionService {
 
   private void validInvitation(InviteRow invite, Row row, Instant now) {
     if (invite.revokedAt() != null
+        || row.resultVersion() > 0
         || !now.isBefore(invite.expiresAt())
         || row.publishedAt() == null
         || !now.isBefore(row.settings().endsAt()))
@@ -369,7 +378,8 @@ public class CompetitionService {
 
   private void requireJoiningOpen(Row row, Instant now) {
     if (row.publishedAt() == null) throw error(HttpStatus.CONFLICT, "PUBLISH_FIRST");
-    if (!now.isBefore(row.settings().endsAt())) throw error(HttpStatus.CONFLICT, "JOINING_CLOSED");
+    if (row.resultVersion() > 0 || !now.isBefore(row.settings().endsAt()))
+      throw error(HttpStatus.CONFLICT, "JOINING_CLOSED");
   }
 
   private InviteRow invitation(String token, boolean lock) {
@@ -431,13 +441,15 @@ public class CompetitionService {
     var s = row.settings();
     Instant close = s.endsAt().plus(Duration.ofHours(24));
     Phase phase =
-        row.publishedAt() == null
-            ? Phase.DRAFT
-            : now.isBefore(s.startsAt())
-                ? Phase.SCHEDULED
-                : now.isBefore(s.endsAt())
-                    ? Phase.ACTIVE
-                    : now.isBefore(close) ? Phase.GRACE : Phase.CLOSED;
+        row.resultVersion() > 0
+            ? (row.resultVersion() == 1 ? Phase.FINALIZED : Phase.REVISED)
+            : row.publishedAt() == null
+                ? Phase.DRAFT
+                : now.isBefore(s.startsAt())
+                    ? Phase.SCHEDULED
+                    : now.isBefore(s.endsAt())
+                        ? Phase.ACTIVE
+                        : now.isBefore(close) ? Phase.GRACE : Phase.CLOSED;
     long count =
         database.queryForObject(
             "SELECT count(*) FROM competition_memberships WHERE competition_id = ? AND status = 'ACTIVE'",
@@ -483,7 +495,8 @@ public class CompetitionService {
             instant(rs, "ends_at"),
             rs.getBoolean("allow_shared_meals")),
         instant(rs, "published_at"),
-        rs.getLong("version"));
+        rs.getLong("version"),
+        rs.getLong("current_result_version"));
   }
 
   private void validate(Settings s) {

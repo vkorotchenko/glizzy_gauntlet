@@ -1,10 +1,10 @@
 # Glizzy Gauntlet
 
-A web-based, friendly hot-dog competition tracker. The **foundation, accounts, competitions, venue directory, and meal-logging milestones** are implemented; the product is not ready for public deployment.
+A web-based, friendly hot-dog competition tracker. The **foundation, accounts, competitions, venue directory, meal logging, progress, and versioned recaps milestones** are implemented; the product is not ready for public deployment.
 
 The implementation connects React/TypeScript through a thin Node gateway to Spring Boot and PostgreSQL. It includes email magic links, optional Google OIDC, explicitly linked sign-in methods, database-backed sessions, display-name editing, public/private competitions, memberships, revocable invitations, Flyway migrations, a generated API client, and automated checks.
 
-**Not implemented yet:** standings, progress dashboards, organizer scoring corrections, and final recaps. The home page labels its scoring illustration as an example; it does not display invented participant data.
+**Before public launch:** complete operational hardening, host feasibility checks, real sign-in provider verification, and independently stored, restore-tested backups. The home page labels its scoring illustration as an example; it does not display invented participant data.
 
 ## Run locally
 
@@ -58,7 +58,7 @@ Only the creator organizes a competition. Drafts are visible only to their organ
 
 You enter times in the selected IANA time zone, not your device's zone. Daylight-saving gaps are rejected. For a repeated hour, choose its first or second occurrence explicitly. Editing preserves the original occurrence and milliseconds. Start/end instants accept up to millisecond precision and are stored in PostgreSQL; the submission cutoff is exactly 24 elapsed hours after the eating end.
 
-Creation, publication, and settings changes require a future start. All settings, including written rules and visibility, lock when a published eating window starts. Updates use a version to reject stale-tab overwrites. Joining is allowed before and during eating, but not during the grace period. A closed submission window is labeled **Submissions closed**, not falsely finalized; standings and recap finalization are still pending.
+Creation, publication, and settings changes require a future start. All settings, including written rules and visibility, lock when a published eating window starts. Updates use a version to reject stale-tab overwrites. Joining is allowed before and during eating, but not during the grace period. A closed submission window is labeled **Submissions closed** until its first immutable result is published, then **Final results** or **Revised results**.
 
 Organizers can create reusable invitation links for published competitions. Links expire after seven days or when eating ends, whichever comes first. At most 20 unexpired, unrevoked links may exist per competition. Copy each link when created: only its hash is stored, and the original cannot be retrieved. Invitation previews do not automatically join anyone or reveal member identities. If you are signed out, sign in and reopen the invitation to accept it.
 
@@ -136,6 +136,30 @@ Meal photos use the same content validation, metadata stripping, and filesystem 
 
 Updates reject stale versions. Mutation requests use a UUID idempotency key: retrying the same payload and key does not create another revision, while reusing a key with different content fails. The form retains its key for an unchanged retry in that editor session. Cutoff checks use database time after acquiring competition locks.
 
+## Standings and personal progress
+
+Published public competition pages show display names, total inches, whole-hot-dog counts, and ranks to visitors. Private standings follow competition access rules. Equal-inch totals share a rank, such as **1, 1, 3**; whole counts and entry timing never break ties. Current members with no submissions score zero. Excluding a member does not silently erase their retained scores; score corrections are a separate organizer action.
+
+Open **My competition progress** from a joined competition to see your own totals, rank, daily/cumulative charts with an exact data table, distinct venues/private labels, and five recent submitted meals. Everything comes from that competition's nonwithdrawn snapshots, not your newest private source revision or another competition. A meal shared with two competitions counts once in each respective view. Archiving its source does not remove either score.
+
+Daily windows contain up to 30 calendar days, newest window first, using the competition's IANA time zone rather than your device's zone. **Older days** moves backward; each window displays days chronologically and includes zero days. Cumulative totals include all earlier submissions, even outside the displayed window. Daylight-saving transitions use local calendar boundaries, not assumed 24-hour days.
+
+Places are grouped by venue ID or exact private-label text. Renamed or hidden directory venues still count once, with a retained snapshot label. Place lists show 20 records per page; standings show 20 participants. Page parameters range from 0 to 1000. Recent-meal links open your private source, which can have newer revisions than the submitted snapshot. Personal progress is available only to the current active member; public standings never include meal locations, notes, photos, daily activity, account IDs, or other competitions.
+
+Results are **provisional** until the submission deadline is processed. After finalization, standings use the latest immutable result, and personal progress uses the latest corrected scores. Use **Refresh standings** or **Refresh progress** to request current results; there is no live push feed.
+
+## Final recaps and score corrections
+
+After the 24-hour grace period, a bounded background sweep publishes the first immutable recap. It checks up to 100 overdue competitions every minute and catches up after restarts. Recap requests also perform the same idempotent deadline catch-up under the competition lock. Before the cutoff, the recap is unavailable. Participant writes stop at the cutoff regardless of scheduler timing.
+
+Open **Competition recap** for frozen rankings, totals, publication time, and calculation version. The first result freezes participant display names and the roster, including zero-score members and former members with retained submissions. Later profile edits or membership exclusions do not silently rewrite published participants. Equal inches still share a rank. The revision list retains every previously published result; `?version=N` opens a specific revision.
+
+Public recaps and revision history expose only result metadata, names, ranks, inches, and whole counts. Private competitions keep their existing visibility rules. Active members also see revision-specific meal/place counts, the largest submitted score, the highest-total local day, top visited places, and the correction audit. Public visitors never receive these details, private locations, correction reasons, photos, or account IDs.
+
+After submissions close, only the competition organizer can use **Correct competition scores**. Supply a required, member-visible reason and either override the aggregate inches/whole count or exclude an entry from scoring. Every changed decision atomically publishes a new **revised** recap and records the actor, time, before/after scores, and result version. Unchanged retries retain their request key and return the original publication receipt rather than creating duplicate revisions.
+
+Corrections are score decisions, not rewritten measurements: they never edit the private source, original item lines, location, photos, memberships, or another competition. A scoring-excluded entry counts zero but its already shared details and photos remain member-visible. Withdrawn entries cannot be corrected or reinstated. Restoring a scoring-excluded entry publishes another revision without erasing its exclusion history.
+
 ## Checks
 
 ```bash
@@ -159,6 +183,8 @@ Directory browser checks cover private drafts, image validation/upload, and with
 
 Meal browser checks cover measured scoring, private photos, access boundaries, and source archival. Set `E2E_TEST_DB_CONTAINER` only for a **disposable local database** to include explicit multi-competition snapshots, frozen submissions, and withdrawal. These fixtures use `docker exec psql` to shift their generated competitions' eating windows; they must never target a real user database. CI enables both database fixtures on its ephemeral stack.
 
+The same disposable database flag enables progress and recap browser checks for shared ranks, zero-score members, private snapshot progress, finalization, historical revisions, organizer corrections, retry after an uncertain response, scoring exclusion/restoration, source isolation, and public-data boundaries.
+
 Run `npm run format` and `(cd services/api && ./mvnw spotless:apply)` before checking formatting.
 
 ## API contract
@@ -179,9 +205,13 @@ Competition endpoints start at `/api/v1/competitions`; use `scope=mine` for your
 
 Meal endpoints start at `/api/v1/meals`, with revision history, source archival, and per-competition withdrawal beneath each meal. `/api/v1/competitions/{id}/meals` exposes member-only submitted snapshots, not private sources. `/api/v1/meal-photos` handles private uploads. Save/archive/withdraw requests require the current source or entry version and a `requestId`; all mutations require the CSRF header.
 
+`/api/v1/competitions/{id}/recap` accepts optional `version` and `page`; `/recap/history` lists published versions, and `/recap/highlights` exposes member-only details for the selected version. `/corrections` lists the member-visible audit. Organizer `POST /entries/{entry}/corrections` requires an entry `version`, durable `requestId`, integer-hundredth total, whole count, scoring-exclusion flag, reason, and CSRF header. Read responses are `no-store`.
+
+`GET /api/v1/competitions/{id}/standings?page=0` returns the permitted public/private standings projection. `GET /api/v1/competitions/{id}/progress?dayPage=0&placePage=0` returns only the current active member's own progress. Both use a consistent read-only database snapshot and `Cache-Control: no-store`; neither accepts a target user selector.
+
 ## Self-hosting boundaries
 
-The Compose files retain database data and reserve a Caddy profile for future HTTPS deployment. Only the development override publishes the gateway and database, both on loopback. Keep the public profile disabled until authentication, upload controls, backups, and the remaining product features are implemented.
+The Compose files retain database data and reserve a Caddy profile for future HTTPS deployment. Only the development override publishes the gateway and database, both on loopback. Keep the public profile disabled until operational hardening, runtime provider checks, and backup/restore verification are complete.
 
 Pi 2/3 production support is **not verified**. Check exact board/OS architecture, runtime image compatibility, memory, storage, and load before choosing it; use an existing local server if it cannot support the complete stack.
 

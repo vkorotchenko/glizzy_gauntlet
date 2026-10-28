@@ -582,6 +582,34 @@ h3 {
   border: 1px solid #dfd4c2;
   border-radius: 8px;
 }
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 20px 0;
+}
+.results-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.results-table caption {
+  text-align: left;
+  font-weight: 750;
+  padding: 12px 0;
+}
+.results-table :is(th, td) {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid #dfd4c2;
+}
+.progress-chart {
+  margin: 24px 0;
+}
+.progress-chart svg {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+}
 @media (max-width: 760px) {
   .competition-section,
   .competition-card {

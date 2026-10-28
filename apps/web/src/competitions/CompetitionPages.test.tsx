@@ -55,6 +55,8 @@ describe('competition screens', () => {
       if (request.url.endsWith('/auth/session'))
         return Response.json({ ...session, user: null })
       if (request.url.endsWith('/featured-venues')) return Response.json([])
+      if (request.url.includes('/standings?'))
+        return Response.json({ items: [], hasMore: false, provisional: true })
       if (request.url.endsWith(`/competitions/${competition.id}`))
         return Response.json(competition)
       throw new Error(

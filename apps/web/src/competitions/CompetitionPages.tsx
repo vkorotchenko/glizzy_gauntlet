@@ -5,6 +5,7 @@ import { loadSession } from '../auth/api'
 import * as api from './api'
 import { FeaturedVenues } from '../directory/DirectoryPages'
 import { CompetitionMeals } from '../meals/MealPages'
+import { Standings } from '../progress/ProgressPages'
 import {
   formatTime,
   fromInstant,
@@ -19,6 +20,8 @@ const phases: Record<api.Competition['phase'], string> = {
   ACTIVE: 'Eating window open',
   GRACE: 'Logging grace period',
   CLOSED: 'Submissions closed',
+  FINALIZED: 'Final results',
+  REVISED: 'Revised results',
 }
 
 function ErrorNotice({ error }: { error: Error | null }) {
@@ -594,20 +597,44 @@ export function CompetitionPage() {
           </p>
           <p className="form-note">
             {item.visibility === 'PUBLIC' &&
-              'Public standings will show display names and totals. '}
+              'Public standings show display names and totals. '}
             Details and photos you explicitly submit will be visible to
             competition members.
           </p>
           {item.phase === 'GRACE' && (
             <p className="form-notice">
-              Eating has ended. Standings will remain provisional during the
-              24-hour submission grace period.
+              Eating has ended. Standings remain provisional during the 24-hour
+              submission grace period.
             </p>
           )}
           <p className="form-note">
-            Standings, progress dashboards, and final recaps are not implemented
-            yet.
+            Recaps finalize after the submission cutoff. Organizer score
+            corrections publish visibly revised recaps without changing source
+            meals.
           </p>
+          {item.published && (
+            <Link className="button secondary" to={`/competitions/${id}/recap`}>
+              Competition recap
+            </Link>
+          )}
+          {item.viewerRole === 'ORGANIZER' &&
+            ['CLOSED', 'FINALIZED', 'REVISED'].includes(item.phase) && (
+              <Link
+                className="button secondary"
+                to={`/competitions/${id}/corrections`}
+              >
+                Correct competition scores
+              </Link>
+            )}
+          {item.published && <Standings key={id} id={id} />}
+          {item.viewerRole !== 'NONE' && (
+            <Link
+              className="button secondary"
+              to={`/competitions/${id}/progress`}
+            >
+              My competition progress
+            </Link>
+          )}
           {item.viewerRole === 'ORGANIZER' && (
             <div className="competition-actions">
               {['DRAFT', 'SCHEDULED'].includes(item.phase) ? (
@@ -706,7 +733,9 @@ export function InvitationPage() {
           <p>
             Joining shares your display name with the competition. Future
             submissions and photos will be visible to its members, not
-            automatically to the public directory.
+            automatically to the public directory. Public competitions also
+            publish display names and totals in their standings, but not meal
+            details or photos.
           </p>
           {session.data?.user ? (
             <button

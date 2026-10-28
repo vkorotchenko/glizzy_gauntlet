@@ -736,8 +736,12 @@ function SubmissionRow({
   return (
     <li>
       <strong>{item.competitionName}</strong> /{' '}
-      {item.withdrawn ? 'Withdrawn' : 'Submitted'} /{' '}
-      {formatInches(item.totalHundredths)} inches / {item.wholeHotDogs} whole
+      {item.withdrawn
+        ? 'Withdrawn'
+        : item.scoreExcluded
+          ? 'Excluded from scoring (retained values)'
+          : 'Submitted'}{' '}
+      / {formatInches(item.totalHundredths)} inches / {item.wholeHotDogs} whole
       hot dogs
       <p>
         {item.acceptsChanges
@@ -904,6 +908,22 @@ export function CompetitionMeals({ id }: { id: string }) {
           {list.data.items.map((entry) => (
             <article className="competition-card" key={entry.id}>
               <h3>{entry.displayName}</h3>
+              {entry.scoreExcluded ? (
+                <p className="form-notice">
+                  Excluded from scoring. Submitted details remain
+                  member-visible.
+                </p>
+              ) : (
+                (entry.totalHundredths !== entry.revision.totalHundredths ||
+                  entry.wholeHotDogs !== entry.revision.wholeHotDogs) && (
+                  <p className="form-notice">
+                    Organizer-corrected score:{' '}
+                    {formatInches(entry.totalHundredths)} inches /{' '}
+                    {entry.wholeHotDogs} whole hot dogs. Measurements below are
+                    the original submission.
+                  </p>
+                )
+              )}
               <MealSummary revision={entry.revision} />
             </article>
           ))}

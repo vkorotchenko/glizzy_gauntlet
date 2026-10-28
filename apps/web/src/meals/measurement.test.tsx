@@ -25,4 +25,11 @@ describe('measurement boundaries', () => {
       expect(() => wholeQuantity(value)).toThrow()
     expect(wholeQuantity('0')).toBe(0)
   })
+  it('allows explicitly bounded aggregate corrections without changing item limits', () => {
+    expect(toHundredths('201999.80', 20199980)).toBe(20199980)
+    expect(() => toHundredths('201999.81', 20199980)).toThrow()
+    expect(() => toHundredths('101')).toThrow()
+    expect(wholeQuantity('2000', 2000)).toBe(2000)
+    expect(() => wholeQuantity('2001', 2000)).toThrow()
+  })
 })

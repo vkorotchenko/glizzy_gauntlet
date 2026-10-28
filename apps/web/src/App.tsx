@@ -16,6 +16,8 @@ import {
   VenuePage,
 } from './directory/DirectoryPages'
 import { MealEditorPage, MealPage, MealsPage } from './meals/MealPages'
+import { ProgressPage } from './progress/ProgressPages'
+import { CorrectionsPage, RecapPage } from './recaps/RecapPages'
 
 function ServiceStatus() {
   const [api] = useState(() =>
@@ -79,8 +81,9 @@ function Home() {
             See the game plan <span aria-hidden="true">&rarr;</span>
           </a>
           <p className="preview-note">
-            Project preview. Accounts, competitions, venues, and meal logging
-            are ready; progress dashboards and recaps are still in development.
+            Project preview. Accounts, competitions, venues, meal logging,
+            standings, personal progress, and versioned recaps are implemented.
+            Self-hosting hardening remains.
           </p>
         </div>
         <div className="score-card" aria-label="Scoring example">
@@ -211,6 +214,12 @@ export default function App() {
           <Route path="/competitions" element={<CompetitionsPage />} />
           <Route path="/competitions/new" element={<CompetitionEditorPage />} />
           <Route path="/competitions/:id" element={<CompetitionPage />} />
+          <Route path="/competitions/:id/progress" element={<ProgressPage />} />
+          <Route path="/competitions/:id/recap" element={<RecapPage />} />
+          <Route
+            path="/competitions/:id/corrections"
+            element={<CorrectionsPage />}
+          />
           <Route
             path="/competitions/:id/settings"
             element={<CompetitionEditorPage />}

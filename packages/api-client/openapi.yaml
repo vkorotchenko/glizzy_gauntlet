@@ -111,6 +111,148 @@ paths:
           $ref: '#/components/responses/Meal'
         default:
           $ref: '#/components/responses/MealError'
+  /competitions/{id}/recap:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getCompetitionRecap
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/ResultVersion'
+      responses:
+        '200':
+          description: Immutable final or revised rankings and totals; public only for published public competitions. Performs idempotent deadline catch-up under the competition lock. No meal details, locations, correction reasons, or account IDs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recap'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/recap/history:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getRecapHistory
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Twenty immutable result-version descriptors per page, newest first; same visibility and deadline catch-up as recap
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ResultVersion'
+                  hasMore: { type: boolean }
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/recap/highlights:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getRecapHighlights
+      parameters:
+        - $ref: '#/components/parameters/ResultVersion'
+      responses:
+        '200':
+          description: Active members only; submitted snapshot highlights for the specified immutable result revision. Scoring-excluded entries do not contribute. Busiest-day ties choose the earliest local day.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecapHighlights'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/entries/{entry}/corrections:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+      - name: entry
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: correctCompetitionScore
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScoreCorrection'
+      responses:
+        '200':
+          description: Organizer-only after the deadline; atomically audits before/after scores and publishes a new immutable recap revision. Does not change the source meal, measured items, location, photos, other competitions, or a withdrawn entry. Same request key/payload returns the original receipt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CorrectionReceipt'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/corrections:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getScoreCorrectionAudit
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Active members only; audited reasons and score decisions, twenty per page, newest first. Never part of the public recap projection.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ScoreCorrectionAudit'
+                  hasMore: { type: boolean }
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/standings:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getCompetitionStandings
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Public only for published public competitions; otherwise competition visibility applies. Twenty participants per page. Rank uses inches alone (1, 1, 3); active members with no submissions score zero. After finalization, serves the latest immutable result rankings and frozen display names. No account IDs or meal details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Standings'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/progress:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getPersonalProgress
+      parameters:
+        - name: dayPage
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 1000, default: 0 }
+        - name: placePage
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 1000, default: 0 }
+      responses:
+        '200':
+          description: Current active member's own nonwithdrawn snapshots in this competition only. Thirty calendar days per page, newest window first, ordered chronologically within the page, including zero days; cumulative totals include earlier pages. Competition IANA time zone defines day boundaries. Twenty places and five recent meals; place labels come from submitted revisions. Archived sources still count. No user selector.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalProgress'
+        default:
+          $ref: '#/components/responses/CompetitionError'
   /competitions/{id}/meals:
     parameters:
       - $ref: '#/components/parameters/CompetitionId'
@@ -131,12 +273,25 @@ paths:
                     type: array
                     items:
                       type: object
-                      required: [id, displayName, revision]
+                      required:
+                        [
+                          id,
+                          displayName,
+                          revision,
+                          version,
+                          scoreExcluded,
+                          totalHundredths,
+                          wholeHotDogs,
+                        ]
                       properties:
                         id: { type: string, format: uuid }
                         displayName: { type: string }
                         revision:
                           $ref: '#/components/schemas/MealRevision'
+                        version: { type: integer, format: int64 }
+                        scoreExcluded: { type: boolean }
+                        totalHundredths: { type: integer, format: int64 }
+                        wholeHotDogs: { type: integer }
                   hasMore: { type: boolean }
         default:
           $ref: '#/components/responses/MealError'
@@ -909,6 +1064,11 @@ paths:
                 $ref: '#/components/schemas/ServiceStatus'
 components:
   parameters:
+    ResultVersion:
+      name: version
+      in: query
+      description: Positive result revision; omit for latest
+      schema: { type: integer, format: int64, minimum: 1 }
     CompetitionId:
       name: id
       in: path
@@ -1000,6 +1160,211 @@ components:
           schema:
             $ref: '#/components/schemas/AuthError'
   schemas:
+    ResultVersion:
+      type: object
+      required: [version, state, createdAt, calculationVersion]
+      properties:
+        version: { type: integer, format: int64, minimum: 1 }
+        state: { type: string, enum: [FINAL, REVISED] }
+        createdAt: { type: string, format: date-time }
+        calculationVersion: { type: integer, minimum: 1 }
+    Recap:
+      type: object
+      required:
+        [
+          result,
+          participantCount,
+          totalHundredths,
+          wholeHotDogs,
+          standings,
+          hasMore,
+        ]
+      properties:
+        result:
+          $ref: '#/components/schemas/ResultVersion'
+        participantCount: { type: integer, format: int64 }
+        totalHundredths: { type: integer, format: int64 }
+        wholeHotDogs: { type: integer, format: int64 }
+        standings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Standing'
+        hasMore: { type: boolean }
+    RecapHighlights:
+      type: object
+      required:
+        [
+          resultVersion,
+          mealCount,
+          venueCount,
+          privateLocationCount,
+          largestMealHundredths,
+          busiestDay,
+          busiestDayHundredths,
+          timeZone,
+          places,
+        ]
+      properties:
+        resultVersion: { type: integer, format: int64 }
+        mealCount: { type: integer, format: int64 }
+        venueCount: { type: integer, format: int64 }
+        privateLocationCount: { type: integer, format: int64 }
+        largestMealHundredths: { type: integer, format: int64 }
+        busiestDay: { type: string, format: date, nullable: true }
+        busiestDayHundredths: { type: integer, format: int64 }
+        timeZone: { type: string }
+        places:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            required: [location, directoryVenue, mealCount, totalHundredths]
+            properties:
+              location: { type: string }
+              directoryVenue: { type: boolean }
+              mealCount: { type: integer, format: int64 }
+              totalHundredths: { type: integer, format: int64 }
+    ScoreCorrection:
+      type: object
+      additionalProperties: false
+      required:
+        [requestId, version, totalHundredths, wholeHotDogs, excluded, reason]
+      properties:
+        requestId: { type: string, format: uuid }
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Current competition-entry version, not source or result version
+        totalHundredths:
+          { type: integer, format: int64, minimum: 1, maximum: 20199980 }
+        wholeHotDogs: { type: integer, minimum: 0, maximum: 2000 }
+        excluded:
+          type: boolean
+          description: Exclude only from scoring, not membership or existing member-visible snapshots
+        reason: { type: string, minLength: 1, maxLength: 500 }
+    CorrectionReceipt:
+      type: object
+      required: [resultVersion, entryVersion]
+      properties:
+        resultVersion: { type: integer, format: int64 }
+        entryVersion: { type: integer, format: int64 }
+    ScoreCorrectionAudit:
+      type: object
+      required:
+        [
+          entryId,
+          actorDisplayName,
+          reason,
+          createdAt,
+          beforeTotalHundredths,
+          beforeWholeHotDogs,
+          beforeExcluded,
+          afterTotalHundredths,
+          afterWholeHotDogs,
+          afterExcluded,
+          resultVersion,
+        ]
+      properties:
+        entryId: { type: string, format: uuid }
+        actorDisplayName: { type: string }
+        reason: { type: string }
+        createdAt: { type: string, format: date-time }
+        beforeTotalHundredths: { type: integer, format: int64 }
+        beforeWholeHotDogs: { type: integer }
+        beforeExcluded: { type: boolean }
+        afterTotalHundredths: { type: integer, format: int64 }
+        afterWholeHotDogs: { type: integer }
+        afterExcluded: { type: boolean }
+        resultVersion: { type: integer, format: int64 }
+    Standing:
+      type: object
+      required: [rank, displayName, totalHundredths, wholeHotDogs]
+      properties:
+        rank: { type: integer, format: int64, minimum: 1 }
+        displayName: { type: string }
+        totalHundredths: { type: integer, format: int64, minimum: 0 }
+        wholeHotDogs: { type: integer, format: int64, minimum: 0 }
+    Standings:
+      type: object
+      required: [items, hasMore, provisional]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Standing'
+        hasMore: { type: boolean }
+        provisional: { type: boolean }
+    ProgressDay:
+      type: object
+      required:
+        [date, totalHundredths, wholeHotDogs, mealCount, cumulativeHundredths]
+      properties:
+        date: { type: string, format: date }
+        totalHundredths: { type: integer, format: int64, minimum: 0 }
+        wholeHotDogs: { type: integer, format: int64, minimum: 0 }
+        mealCount: { type: integer, format: int64, minimum: 0 }
+        cumulativeHundredths: { type: integer, format: int64, minimum: 0 }
+    ProgressPlace:
+      type: object
+      required: [venueId, location, mealCount, totalHundredths]
+      properties:
+        venueId: { type: string, format: uuid, nullable: true }
+        location: { type: string }
+        mealCount: { type: integer, format: int64, minimum: 1 }
+        totalHundredths: { type: integer, format: int64, minimum: 0 }
+    ProgressMeal:
+      type: object
+      required:
+        [mealId, revisionId, eatenAt, location, totalHundredths, wholeHotDogs]
+      properties:
+        mealId: { type: string, format: uuid }
+        revisionId: { type: string, format: uuid }
+        eatenAt: { type: string, format: date-time }
+        location: { type: string }
+        totalHundredths: { type: integer, format: int64, minimum: 1 }
+        wholeHotDogs: { type: integer, format: int64, minimum: 0 }
+    PersonalProgress:
+      type: object
+      required:
+        [
+          timeZone,
+          provisional,
+          rank,
+          totalHundredths,
+          wholeHotDogs,
+          mealCount,
+          venueCount,
+          privateLocationCount,
+          days,
+          daysHasMore,
+          places,
+          placesHasMore,
+          recentMeals,
+        ]
+      properties:
+        timeZone: { type: string }
+        provisional: { type: boolean }
+        rank: { type: integer, format: int64, minimum: 1 }
+        totalHundredths: { type: integer, format: int64, minimum: 0 }
+        wholeHotDogs: { type: integer, format: int64, minimum: 0 }
+        mealCount: { type: integer, format: int64, minimum: 0 }
+        venueCount: { type: integer, format: int64, minimum: 0 }
+        privateLocationCount: { type: integer, format: int64, minimum: 0 }
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProgressDay'
+        daysHasMore: { type: boolean }
+        places:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProgressPlace'
+        placesHasMore: { type: boolean }
+        recentMeals:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProgressMeal'
     MealItem:
       type: object
       additionalProperties: false
@@ -1116,6 +1481,7 @@ components:
           totalHundredths,
           wholeHotDogs,
           withdrawn,
+          scoreExcluded,
           version,
           acceptsChanges,
         ]
@@ -1126,6 +1492,7 @@ components:
         totalHundredths: { type: integer, format: int64 }
         wholeHotDogs: { type: integer }
         withdrawn: { type: boolean }
+        scoreExcluded: { type: boolean }
         version: { type: integer, format: int64 }
         acceptsChanges: { type: boolean }
     Meal:
@@ -1323,7 +1690,7 @@ components:
           format: int64
         phase:
           type: string
-          enum: [DRAFT, SCHEDULED, ACTIVE, GRACE, CLOSED]
+          enum: [DRAFT, SCHEDULED, ACTIVE, GRACE, CLOSED, FINALIZED, REVISED]
         viewerRole:
           type: string
           enum: [NONE, MEMBER, ORGANIZER]

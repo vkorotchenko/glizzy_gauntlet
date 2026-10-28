@@ -88,6 +88,7 @@ public class MealService {
       long totalHundredths,
       int wholeHotDogs,
       boolean withdrawn,
+      boolean scoreExcluded,
       long version,
       boolean acceptsChanges) {}
 
@@ -98,7 +99,14 @@ public class MealService {
 
   public record RevisionPage(List<Revision> items, boolean hasMore) {}
 
-  public record Entry(UUID id, String displayName, Revision revision) {}
+  public record Entry(
+      UUID id,
+      String displayName,
+      Revision revision,
+      long version,
+      boolean scoreExcluded,
+      long totalHundredths,
+      int wholeHotDogs) {}
 
   public record EntryPage(List<Entry> items, boolean hasMore) {}
 
@@ -291,7 +299,10 @@ public class MealService {
     var rows =
         database.query(
             """
-        SELECT e.id, e.revision_id, u.display_name FROM competition_entries e
+        SELECT e.*, u.display_name,
+          COALESCE(e.adjusted_total_hundredths, r.total_hundredths) AS score_total,
+          COALESCE(e.adjusted_whole_hot_dogs, r.whole_hot_dogs) AS score_whole
+        FROM competition_entries e JOIN meal_revisions r ON r.id = e.revision_id
         JOIN meals m ON m.id = e.meal_id JOIN app_users u ON u.id = m.owner_id
         WHERE e.competition_id = ? AND NOT e.withdrawn ORDER BY e.created_at DESC, e.id LIMIT 21 OFFSET ?
         """,
@@ -299,7 +310,11 @@ public class MealService {
                 new Entry(
                     rs.getObject("id", UUID.class),
                     rs.getString("display_name"),
-                    revision(rs.getObject("revision_id", UUID.class))),
+                    revision(rs.getObject("revision_id", UUID.class)),
+                    rs.getLong("version"),
+                    rs.getBoolean("score_excluded"),
+                    rs.getLong("score_total"),
+                    rs.getInt("score_whole")),
             competition,
             page * 20);
     return new EntryPage(rows.stream().limit(20).toList(), rows.size() > 20);
@@ -476,7 +491,9 @@ public class MealService {
     }
     if (competition.viewerRole() == CompetitionService.Role.NONE || !competition.published())
       throw new MealException(HttpStatus.FORBIDDEN, "TARGET_UNAVAILABLE", id);
-    if (!now.isBefore(competition.submissionClosesAt()))
+    if (competition.phase() == CompetitionService.Phase.FINALIZED
+        || competition.phase() == CompetitionService.Phase.REVISED
+        || !now.isBefore(competition.submissionClosesAt()))
       throw new MealException(HttpStatus.CONFLICT, "SUBMISSIONS_CLOSED", id);
     return competition;
   }
@@ -503,8 +520,10 @@ public class MealService {
     var submissions =
         database.query(
             """
-        SELECT e.*, r.total_hundredths, r.whole_hot_dogs,
-          (m.status = 'ACTIVE' AND c.published_at IS NOT NULL AND clock_timestamp() < c.ends_at + interval '24 hours') AS writable
+        SELECT e.*, COALESCE(e.adjusted_total_hundredths, r.total_hundredths) AS total_hundredths,
+          COALESCE(e.adjusted_whole_hot_dogs, r.whole_hot_dogs) AS whole_hot_dogs,
+          (m.status = 'ACTIVE' AND c.published_at IS NOT NULL AND c.current_result_version IS NULL
+            AND clock_timestamp() < c.ends_at + interval '24 hours') AS writable
         FROM competition_entries e JOIN meal_revisions r ON r.id = e.revision_id
         JOIN competitions c ON c.id = e.competition_id
         LEFT JOIN competition_memberships m ON m.competition_id = c.id AND m.user_id = ?
@@ -518,6 +537,7 @@ public class MealService {
                     rs.getLong("total_hundredths"),
                     rs.getInt("whole_hot_dogs"),
                     rs.getBoolean("withdrawn"),
+                    rs.getBoolean("score_excluded"),
                     rs.getLong("version"),
                     rs.getBoolean("writable")),
             row.owner(),
