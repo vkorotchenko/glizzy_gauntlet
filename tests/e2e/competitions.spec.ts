@@ -197,6 +197,7 @@ test('discovers public competitions, joins as a member, and limits settings to t
       .fill('Measured lengths only. Take your time.')
     await page.getByRole('checkbox').check()
     await page.getByRole('button', { name: 'Save settings' }).click()
+    await expect(page).toHaveURL(new URL(path, page.url()).href)
     await expect(
       page.getByText('Measured lengths only. Take your time.', { exact: true }),
     ).toBeVisible()

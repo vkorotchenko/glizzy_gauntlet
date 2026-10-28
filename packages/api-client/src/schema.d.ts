@@ -4,6 +4,201 @@
  */
 
 export interface paths {
+    "/venues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listVenues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/venues/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getVenue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/venues/{id}/visibility": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["setVenueVisibility"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/directory/contributions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listDirectoryContributions"];
+        put?: never;
+        post: operations["createDirectoryContribution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/directory/contributions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getDirectoryContribution"];
+        put?: never;
+        post?: never;
+        delete: operations["discardDirectoryContribution"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/directory/contributions/{id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["submitDirectoryContribution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/directory/contributions/{id}/photos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["uploadDirectoryPhoto"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/directory/contributions/{id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reviewDirectoryContribution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/directory/photos/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getDirectoryPhoto"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/featured-venues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["listFeaturedVenues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/featured-venues/{venue}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                venue: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["featureVenue"];
+        post?: never;
+        delete: operations["unfeatureVenue"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/competitions": {
         parameters: {
             query?: never;
@@ -313,6 +508,63 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        MenuInput: {
+            name: string;
+            description: string;
+        };
+        DirectoryInput: {
+            /** Format: uuid */
+            venueId?: string | null;
+            /** Format: uuid */
+            baseRevision?: string | null;
+            name: string;
+            address: string;
+            description: string;
+            latitude: number;
+            longitude: number;
+            menuItems: components["schemas"]["MenuInput"][];
+        };
+        DirectoryPhoto: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            menuItemId: string | null;
+        };
+        Venue: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            revision: string;
+            name: string;
+            address: string;
+            description: string;
+            latitude: number;
+            longitude: number;
+            menuItems: {
+                /** Format: uuid */
+                id: string;
+                name: string;
+                description: string;
+            }[];
+            photos: components["schemas"]["DirectoryPhoto"][];
+        };
+        VenuePage: {
+            items: components["schemas"]["Venue"][];
+            hasMore: boolean;
+        };
+        Contribution: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            status: "DRAFT" | "PENDING" | "APPROVED" | "REJECTED";
+            reviewReason: string;
+            own: boolean;
+            venue: components["schemas"]["Venue"];
+        };
+        ContributionPage: {
+            items: components["schemas"]["Contribution"][];
+            hasMore: boolean;
+        };
         CompetitionSettings: {
             name: string;
             rules: string;
@@ -459,6 +711,370 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listVenues: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                south?: number;
+                north?: number;
+                west?: number;
+                east?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Approved visible venues, ordered by name; supply all four bounds together, west no greater than east */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VenuePage"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    getVenue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current approved public venue revision only */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Venue"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    setVenueVisibility: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    hidden: boolean;
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Site-owner-only audited visibility change; hidden venues and their photos disappear from public views and featured lists */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    listDirectoryContributions: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                scope?: "mine" | "pending" | "all";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Own contribution history, or site-owner-only pending queue/all contribution history */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionPage"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    createDirectoryContribution: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DirectoryInput"];
+            };
+        };
+        responses: {
+            /** @description Private draft; attach optional photos before explicitly submitting for review */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Contribution"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    getDirectoryContribution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Contributor or site-owner view, never public */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Contribution"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    discardDirectoryContribution: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Contributor discards a nonapproved contribution and removes its photos */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    submitDirectoryContribution: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Draft locked and placed in the moderation queue */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Contribution"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    uploadDirectoryPhoto: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                    /** Format: uuid */
+                    menuItemId?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Sanitized JPEG and thumbnail; actual JPEG/PNG content only, at most 5 MiB, 6000 pixels per side and 12 megapixels; maximum 10 photos per draft and 200 per contributor */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectoryPhoto"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    reviewDirectoryContribution: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    approve: boolean;
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Site-owner-only audited decision; approval replaces the entire venue and photo revision, refusing stale updates */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Contribution"];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    getDirectoryPhoto: {
+        parameters: {
+            query?: {
+                thumbnail?: boolean;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reencoded image only; public only when associated with a currently visible approved venue revision; otherwise contributor/site owner only, always no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": string;
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    listFeaturedVenues: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Approved visible featured venues, with the competition's draft/private access rules */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Venue"][];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    featureVenue: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                venue: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Organizer-only idempotent addition; maximum 20 featured venues */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    unfeatureVenue: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                venue: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Organizer-only idempotent removal */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
     listCompetitions: {
         parameters: {
             query?: {

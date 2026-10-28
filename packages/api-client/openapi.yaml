@@ -5,6 +5,263 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /venues:
+    get:
+      operationId: listVenues
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - {
+            name: south,
+            in: query,
+            schema: { type: number, minimum: -90, maximum: 90 },
+          }
+        - {
+            name: north,
+            in: query,
+            schema: { type: number, minimum: -90, maximum: 90 },
+          }
+        - {
+            name: west,
+            in: query,
+            schema: { type: number, minimum: -180, maximum: 180 },
+          }
+        - {
+            name: east,
+            in: query,
+            schema: { type: number, minimum: -180, maximum: 180 },
+          }
+      responses:
+        '200':
+          description: Approved visible venues, ordered by name; supply all four bounds together, west no greater than east
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VenuePage'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /venues/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getVenue
+      responses:
+        '200':
+          description: Current approved public venue revision only
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Venue'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /venues/{id}/visibility:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    put:
+      operationId: setVenueVisibility
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [hidden, reason]
+              properties:
+                hidden: { type: boolean }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '204':
+          description: Site-owner-only audited visibility change; hidden venues and their photos disappear from public views and featured lists
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /directory/contributions:
+    get:
+      operationId: listDirectoryContributions
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - name: scope
+          in: query
+          schema: { type: string, enum: [mine, pending, all], default: mine }
+      responses:
+        '200':
+          description: Own contribution history, or site-owner-only pending queue/all contribution history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContributionPage'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    post:
+      operationId: createDirectoryContribution
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DirectoryInput'
+      responses:
+        '201':
+          description: Private draft; attach optional photos before explicitly submitting for review
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contribution'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /directory/contributions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getDirectoryContribution
+      responses:
+        '200':
+          description: Contributor or site-owner view, never public
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contribution'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    delete:
+      operationId: discardDirectoryContribution
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Contributor discards a nonapproved contribution and removes its photos
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /directory/contributions/{id}/submit:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    post:
+      operationId: submitDirectoryContribution
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Draft locked and placed in the moderation queue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contribution'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /directory/contributions/{id}/photos:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    post:
+      operationId: uploadDirectoryPhoto
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                menuItemId: { type: string, format: uuid }
+      responses:
+        '201':
+          description: Sanitized JPEG and thumbnail; actual JPEG/PNG content only, at most 5 MiB, 6000 pixels per side and 12 megapixels; maximum 10 photos per draft and 200 per contributor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DirectoryPhoto'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /directory/contributions/{id}/review:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    post:
+      operationId: reviewDirectoryContribution
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [approve, reason]
+              properties:
+                approve: { type: boolean }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200':
+          description: Site-owner-only audited decision; approval replaces the entire venue and photo revision, refusing stale updates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contribution'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /directory/photos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getDirectoryPhoto
+      parameters:
+        - name: thumbnail
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Reencoded image only; public only when associated with a currently visible approved venue revision; otherwise contributor/site owner only, always no-store
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/featured-venues:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: listFeaturedVenues
+      responses:
+        '200':
+          description: Approved visible featured venues, with the competition's draft/private access rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Venue'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/featured-venues/{venue}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+      - name: venue
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: featureVenue
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Organizer-only idempotent addition; maximum 20 featured venues
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    delete:
+      operationId: unfeatureVenue
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Organizer-only idempotent removal
+        default:
+          $ref: '#/components/responses/CompetitionError'
   /competitions:
     get:
       operationId: listCompetitions
@@ -505,6 +762,99 @@ components:
           schema:
             $ref: '#/components/schemas/AuthError'
   schemas:
+    MenuInput:
+      type: object
+      additionalProperties: false
+      required: [name, description]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 1000 }
+    DirectoryInput:
+      type: object
+      additionalProperties: false
+      required: [name, address, description, latitude, longitude, menuItems]
+      properties:
+        venueId: { type: string, format: uuid, nullable: true }
+        baseRevision: { type: string, format: uuid, nullable: true }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        address: { type: string, minLength: 1, maxLength: 300 }
+        description: { type: string, maxLength: 2000 }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        menuItems:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/MenuInput'
+    DirectoryPhoto:
+      type: object
+      required: [id, menuItemId]
+      properties:
+        id: { type: string, format: uuid }
+        menuItemId: { type: string, format: uuid, nullable: true }
+    Venue:
+      type: object
+      required:
+        [
+          id,
+          revision,
+          name,
+          address,
+          description,
+          latitude,
+          longitude,
+          menuItems,
+          photos,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        revision: { type: string, format: uuid }
+        name: { type: string }
+        address: { type: string }
+        description: { type: string }
+        latitude: { type: number }
+        longitude: { type: number }
+        menuItems:
+          type: array
+          items:
+            type: object
+            required: [id, name, description]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              description: { type: string }
+        photos:
+          type: array
+          items:
+            $ref: '#/components/schemas/DirectoryPhoto'
+    VenuePage:
+      type: object
+      required: [items, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Venue'
+        hasMore: { type: boolean }
+    Contribution:
+      type: object
+      required: [id, status, reviewReason, own, venue]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [DRAFT, PENDING, APPROVED, REJECTED] }
+        reviewReason: { type: string }
+        own: { type: boolean }
+        venue:
+          $ref: '#/components/schemas/Venue'
+    ContributionPage:
+      type: object
+      required: [items, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Contribution'
+        hasMore: { type: boolean }
     CompetitionSettings:
       type: object
       additionalProperties: false

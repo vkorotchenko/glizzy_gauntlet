@@ -54,6 +54,7 @@ describe('competition screens', () => {
     const fetch = vi.fn(async (request: Request) => {
       if (request.url.endsWith('/auth/session'))
         return Response.json({ ...session, user: null })
+      if (request.url.endsWith('/featured-venues')) return Response.json([])
       if (request.url.endsWith(`/competitions/${competition.id}`))
         return Response.json(competition)
       throw new Error(
@@ -104,6 +105,9 @@ describe('competition screens', () => {
           return Response.json(draft, { status: 201 })
         }
         if (request.url.endsWith('/invitations')) return Response.json([])
+        if (request.url.endsWith('/featured-venues')) return Response.json([])
+        if (request.url.includes('/venues?'))
+          return Response.json({ items: [], hasMore: false })
         if (request.url.includes('/members'))
           return Response.json({ items: [], hasMore: false })
         return Response.json(draft)

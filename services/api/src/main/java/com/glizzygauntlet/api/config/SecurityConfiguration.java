@@ -40,6 +40,10 @@ class SecurityConfiguration {
                         "/api/v1/auth/session",
                         "/api/v1/competitions",
                         "/api/v1/competitions/*",
+                        "/api/v1/competitions/*/featured-venues",
+                        "/api/v1/venues",
+                        "/api/v1/venues/*",
+                        "/api/v1/directory/photos/*",
                         "/actuator/health",
                         "/actuator/health/**",
                         "/oauth2/**",
@@ -57,6 +61,8 @@ class SecurityConfiguration {
                         "/api/v1/me",
                         "/api/v1/competitions/**",
                         "/api/v1/competition-invitations/**")
+                    .authenticated()
+                    .requestMatchers("/api/v1/venues/**", "/api/v1/directory/**")
                     .authenticated()
                     .anyRequest()
                     .denyAll())

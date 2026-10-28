@@ -35,6 +35,10 @@ services:
       GOOGLE_ENABLED: ${GOOGLE_ENABLED:-false}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      MEDIA_DIRECTORY: /app/media
+      MEDIA_MAX_BYTES: ${MEDIA_MAX_BYTES:-536870912}
+    volumes:
+      - media:/app/media
     depends_on:
       db:
         condition: service_healthy
@@ -57,6 +61,8 @@ services:
     build:
       context: ..
       dockerfile: apps/gateway/Dockerfile
+      args:
+        VITE_MAP_STYLE_URL: ${VITE_MAP_STYLE_URL:-https://tiles.openfreemap.org/styles/liberty}
     environment:
       API_ORIGIN: http://api:8080
     depends_on:
@@ -94,5 +100,6 @@ services:
 
 volumes:
   database:
+  media:
   caddy-data:
   caddy-config:

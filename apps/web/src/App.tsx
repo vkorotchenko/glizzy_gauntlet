@@ -9,6 +9,12 @@ import {
   CompetitionsPage,
   InvitationPage,
 } from './competitions/CompetitionPages'
+import {
+  ContributionEditorPage,
+  ContributionPage,
+  DirectoryPage,
+  VenuePage,
+} from './directory/DirectoryPages'
 
 function ServiceStatus() {
   const [api] = useState(() =>
@@ -72,8 +78,8 @@ function Home() {
             See the game plan <span aria-hidden="true">&rarr;</span>
           </a>
           <p className="preview-note">
-            Project preview. Accounts and competitions are ready; saved meals
-            and maps are still in development.
+            Project preview. Accounts, competitions, and the venue directory are
+            ready; saved meals and recaps are still in development.
           </p>
         </div>
         <div className="score-card" aria-label="Scoring example">
@@ -166,6 +172,9 @@ export default function App() {
           Glizzy Gauntlet
         </Link>
         <nav className="header-links" aria-label="Main navigation">
+          <Link className="account-link" to="/venues">
+            Venues
+          </Link>
           <Link className="account-link" to="/competitions">
             Competitions
           </Link>
@@ -180,6 +189,17 @@ export default function App() {
           <Route path="/sign-in" element={<SignInPage />} />
           <Route path="/sign-in/confirm" element={<ConfirmLinkPage />} />
           <Route path="/account" element={<AccountPage />} />
+          <Route path="/venues" element={<DirectoryPage />} />
+          <Route path="/venues/new" element={<ContributionEditorPage />} />
+          <Route path="/venues/:id" element={<VenuePage />} />
+          <Route
+            path="/venues/:id/suggest"
+            element={<ContributionEditorPage />}
+          />
+          <Route
+            path="/directory/contributions/:id"
+            element={<ContributionPage />}
+          />
           <Route path="/competitions" element={<CompetitionsPage />} />
           <Route path="/competitions/new" element={<CompetitionEditorPage />} />
           <Route path="/competitions/:id" element={<CompetitionPage />} />

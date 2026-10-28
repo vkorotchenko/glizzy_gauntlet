@@ -548,6 +548,40 @@ h3 {
   display: block;
   margin-top: 14px;
 }
+.venue-map {
+  height: 360px;
+  width: 100%;
+  margin: 20px 0;
+  border: 1px solid #dfd4c2;
+  border-radius: 12px;
+}
+.venue-thumbnail,
+.photo-gallery img {
+  width: 100%;
+  height: 180px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: #e5d7bd;
+}
+.photo-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 20px;
+  margin-bottom: 24px;
+}
+.photo-gallery figure {
+  margin: 0;
+}
+.photo-gallery figcaption {
+  margin-top: 8px;
+}
+.competition-form fieldset {
+  min-width: 0;
+  padding: 18px;
+  margin: 20px 0;
+  border: 1px solid #dfd4c2;
+  border-radius: 8px;
+}
 @media (max-width: 760px) {
   .competition-section,
   .competition-card {

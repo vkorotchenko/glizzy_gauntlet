@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { loadSession } from '../auth/api'
 import * as api from './api'
+import { FeaturedVenues } from '../directory/DirectoryPages'
 import {
   formatTime,
   fromInstant,
@@ -557,6 +558,10 @@ export function CompetitionPage() {
             {item.visibility === 'PRIVATE' ? 'Private' : 'Public'}
           </span>
           <h1>{item.name}</h1>
+          <FeaturedVenues
+            competitionId={id}
+            organizer={item.viewerRole === 'ORGANIZER'}
+          />
           <p className="competition-rules">
             {item.rules || 'No additional written rules.'}
           </p>

@@ -7,6 +7,8 @@ COPY packages/api-client/package.json packages/api-client/package.json
 RUN npm ci
 COPY apps apps
 COPY packages packages
+ARG VITE_MAP_STYLE_URL=https://tiles.openfreemap.org/styles/liberty
+ENV VITE_MAP_STYLE_URL=$VITE_MAP_STYLE_URL
 RUN npm run build
 
 FROM node:24-alpine AS runtime

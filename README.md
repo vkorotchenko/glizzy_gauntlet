@@ -1,10 +1,10 @@
 # Glizzy Gauntlet
 
-A web-based, friendly hot-dog competition tracker. The **foundation, accounts, and competition-management milestones** are implemented; the product is not ready for public deployment.
+A web-based, friendly hot-dog competition tracker. The **foundation, accounts, competitions, and venue-directory milestones** are implemented; the product is not ready for public deployment.
 
 The implementation connects React/TypeScript through a thin Node gateway to Spring Boot and PostgreSQL. It includes email magic links, optional Google OIDC, explicitly linked sign-in methods, database-backed sessions, display-name editing, public/private competitions, memberships, revocable invitations, Flyway migrations, a generated API client, and automated checks.
 
-**Not implemented yet:** saved meal logs, venue maps/photos, progress dashboards, and final recaps. The home page labels its scoring illustration as an example; it does not display invented participant data.
+**Not implemented yet:** saved meal logs, progress dashboards, and final recaps. The home page labels its scoring illustration as an example; it does not display invented participant data.
 
 ## Run locally
 
@@ -102,7 +102,23 @@ Replace the placeholder below with that UUID:
 UPDATE app_users SET site_owner = TRUE WHERE id = 'YOUR_ACCOUNT_UUID';
 ```
 
-There is no HTTP role-granting endpoint. Directory/moderation features are still pending; the owner flag does not expose unimplemented APIs.
+There is no HTTP role-granting endpoint. Site owners can review directory contributions and hide or restore approved listings.
+
+## Venue directory and photos
+
+Open **Venues** for the public approved directory. The list always works independently of the optional map. Loading the map contacts OpenFreeMap and displays only the current page's listings, with OpenStreetMap attribution. `VITE_MAP_STYLE_URL` is a public build-time setting; rebuild the gateway image after changing it. No paid places API, geocoding, or address search is used.
+
+Signed-in accounts can suggest a venue with a public address, manually entered coordinates, and up to 20 menu items. Save a private draft, attach optional venue/menu-item photos, then explicitly **Submit for review**. Use **My contributions** to return to drafts, check review reasons, or discard a nonapproved submission. At most 20 open drafts/pending submissions are allowed per account. Do not put home addresses or private meal locations in this public-intent workflow.
+
+The site owner's **Review queue** supports approval/rejection with a required, audited reason. **All contributions** also provides private history and access to visibility controls. Only the contributor can upload, submit, or discard their draft; site-owner review does not grant ownership. Approved-listing suggestions are full replacement revisions, including their menu/photos, and leave the existing public version untouched until approval. Reattach photos that should appear in the replacement. Stale replacements are rejected rather than overwriting a newer approval.
+
+Only current, approved, nonhidden venue photos are public. Other photos are available only to their contributor and the site owner. Hiding or replacing a listing revokes public access to its old photos; responses are `no-store`. This directory upload flow never publishes private meal photos automatically.
+
+Uploads accept actual JPEG/PNG content, not a filename or declared MIME type: at most 5 MiB, 6000 pixels per side, and 12 megapixels. The API decodes and reencodes to metadata-free JPEG (longest side 1600 pixels) plus a 400-pixel thumbnail. Originals are not retained, and filenames never determine storage paths. Limits are 10 photos per draft, 200 retained photos per contributor, and a shared 512 MiB sanitized-storage budget (`MEDIA_MAX_BYTES`). Decoding/quota checks are serialized. Discarding a nonapproved contribution removes its files; approved history remains retained.
+
+Compose persists sanitized files in the API-only `media` volume, outside the gateway web root. Host-side Spring uses `services/api/var/media` by default; override `MEDIA_DIRECTORY` as needed. Backups must include both PostgreSQL and media. These are bounded local-storage controls, not a verified production backup or capacity guarantee.
+
+Competition organizers can choose up to 20 approved featured venues from their competition page. Featured views follow the competition's draft/private access rules, and hidden listings automatically disappear. Featuring a venue does not grant moderation privileges or promise availability.
 
 ## Checks
 
@@ -122,6 +138,8 @@ npm run test:e2e
 ```
 
 The browser suite checks the real stack, failure/retry behavior, routing boundaries, and desktop/mobile layouts. It reads email from Mailpit and covers sign-in, profiles, logout, token reuse, private drafts, public discovery, explicit invitation joins, revocation, exclusion, and organizer-only settings with separate browser sessions. Set `PLAYWRIGHT_BASE_URL` and `MAILPIT_BASE_URL` when using nondefault gateway/inbox addresses.
+
+Directory browser checks cover private drafts, image validation/upload, and withdrawal. To include owner approval, public photos, featured venues, hide/restore, and map-outage checks against a **disposable local database only**, set `E2E_DIRECTORY_DB_CONTAINER` to that Compose database container's name. This explicitly permits the test to bootstrap its own generated account as a site owner using `docker exec psql`; never point it at a real user database. CI enables this only on its ephemeral stack.
 
 Run `npm run format` and `(cd services/api && ./mvnw spotless:apply)` before checking formatting.
 

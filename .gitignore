@@ -11,3 +11,4 @@ test-results/
 .DS_Store
 .idea/
 .vscode/
+services/api/var/
