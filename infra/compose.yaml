@@ -1,7 +1,13 @@
 name: glizzy-gauntlet
+x-bounded-logs: &bounded-logs
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
 services:
   db:
     image: postgres:17-alpine
+    logging: *bounded-logs
     environment:
       POSTGRES_DB: glizzy_gauntlet
       POSTGRES_USER: glizzy
@@ -16,6 +22,7 @@ services:
     restart: unless-stopped
 
   api:
+    logging: *bounded-logs
     build:
       context: ..
       dockerfile: services/api/Dockerfile
@@ -58,6 +65,7 @@ services:
     restart: unless-stopped
 
   gateway:
+    logging: *bounded-logs
     build:
       context: ..
       dockerfile: apps/gateway/Dockerfile
@@ -83,6 +91,7 @@ services:
 
   caddy:
     image: caddy:2-alpine
+    logging: *bounded-logs
     profiles: ['public']
     environment:
       PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:-localhost}

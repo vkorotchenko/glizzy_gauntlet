@@ -32,6 +32,11 @@ jobs:
         env:
           E2E_DIRECTORY_DB_CONTAINER: glizzy-gauntlet-db-1
           E2E_TEST_DB_CONTAINER: glizzy-gauntlet-db-1
+      - name: Rehearse a clean database and media restore
+        run: npm run test:recovery
+        env:
+          RECOVERY_TEST_DISPOSABLE: '1'
+          RECOVERY_SOURCE_PROJECT: glizzy-gauntlet
       - name: Stop the local stack
         if: always()
         run: docker compose --env-file .env.example -f infra/compose.yaml -f infra/compose.dev.yaml down --volumes

@@ -4,7 +4,7 @@ A web-based, friendly hot-dog competition tracker. The **foundation, accounts, c
 
 The implementation connects React/TypeScript through a thin Node gateway to Spring Boot and PostgreSQL. It includes email magic links, optional Google OIDC, explicitly linked sign-in methods, database-backed sessions, display-name editing, public/private competitions, memberships, revocable invitations, Flyway migrations, a generated API client, and automated checks.
 
-**Before public launch:** complete operational hardening, host feasibility checks, real sign-in provider verification, and independently stored, restore-tested backups. The home page labels its scoring illustration as an example; it does not display invented participant data.
+**Before public launch:** complete host feasibility checks, real sign-in provider verification, and independently stored backups with a restore rehearsal on the chosen host. Local recovery tooling and deployment preflight are implemented; they do not certify a production environment. The home page labels its scoring illustration as an example; it does not display invented participant data.
 
 ## Run locally
 
@@ -216,3 +216,7 @@ The Compose files retain database data and reserve a Caddy profile for future HT
 Pi 2/3 production support is **not verified**. Check exact board/OS architecture, runtime image compatibility, memory, storage, and load before choosing it; use an existing local server if it cannot support the complete stack.
 
 Public deployment also requires a free dynamic-DNS hostname, router forwarding, HTTPS, Google application configuration, working SMTP delivery, and independently stored, restore-tested backups. None is automatically provisioned by this repository.
+
+Follow the [operations guide](ops/README.md) for redacted deployment preflight, consistent database-plus-media backups, non-destructive clean-project restores, interruption recovery, and upgrade/rollback boundaries. `npm run test:recovery` rehearses recovery using synthetic data on an explicitly allowed disposable local stack; CI runs it after browser acceptance.
+
+The gateway applies no-referrer, frame-denial, and MIME-sniffing protections to application and error responses. It strips incoming proxy-forwarding headers, and Spring constructs sign-in destinations from the configured public origin. When configured, SMTP STARTTLS is required rather than silently downgraded. Production Compose services use bounded logs. These controls do not replace the real-host/network/provider checks above.
