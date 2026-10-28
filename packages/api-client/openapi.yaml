@@ -5,6 +5,207 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /meals:
+    get:
+      operationId: listMyMeals
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - {
+            name: archived,
+            in: query,
+            schema: { type: boolean, default: false },
+          }
+      responses:
+        '200':
+          description: Current user's private source meals, each counted once regardless of submissions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MealPage'
+        default:
+          $ref: '#/components/responses/MealError'
+    post:
+      operationId: createMeal
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/MealSave'
+      responses:
+        '201':
+          $ref: '#/components/responses/Meal'
+        default:
+          $ref: '#/components/responses/MealError'
+  /meals/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getMyMeal
+      responses:
+        '200':
+          $ref: '#/components/responses/Meal'
+        default:
+          $ref: '#/components/responses/MealError'
+    put:
+      operationId: reviseMyMeal
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/MealSave'
+      responses:
+        '200':
+          $ref: '#/components/responses/Meal'
+        default:
+          $ref: '#/components/responses/MealError'
+  /meals/{id}/history:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getMyMealHistory
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Owner-only immutable source revisions, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MealRevision'
+                  hasMore: { type: boolean }
+        default:
+          $ref: '#/components/responses/MealError'
+  /meals/{id}/archive:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    post:
+      operationId: archiveMyMeal
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/MealChange'
+      responses:
+        '200':
+          $ref: '#/components/responses/Meal'
+        default:
+          $ref: '#/components/responses/MealError'
+  /meals/{id}/submissions/{competition}/withdraw:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+      - name: competition
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: withdrawMySubmission
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/MealChange'
+      responses:
+        '200':
+          $ref: '#/components/responses/Meal'
+        default:
+          $ref: '#/components/responses/MealError'
+  /competitions/{id}/meals:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getCompetitionMealActivity
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Active members only; submitted snapshots, not private source edits or withdrawn entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, displayName, revision]
+                      properties:
+                        id: { type: string, format: uuid }
+                        displayName: { type: string }
+                        revision:
+                          $ref: '#/components/schemas/MealRevision'
+                  hasMore: { type: boolean }
+        default:
+          $ref: '#/components/responses/MealError'
+  /meal-photos:
+    get:
+      operationId: listMyUnattachedMealPhotos
+      responses:
+        '200':
+          description: Current user's private staged uploads, at most 200; no directory photo reuse
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string, format: uuid }
+        default:
+          $ref: '#/components/responses/MealError'
+    post:
+      operationId: uploadPrivateMealPhoto
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201':
+          description: Private sanitized JPEG/thumbnail; same content, byte, pixel and dimension limits as directory photos, with a separate 200-photo/account limit and shared global storage budget
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: string, format: uuid }
+        default:
+          $ref: '#/components/responses/MealError'
+  /meal-photos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getPrivateMealPhoto
+      parameters:
+        - {
+            name: thumbnail,
+            in: query,
+            schema: { type: boolean, default: false },
+          }
+      responses:
+        '200':
+          description: Owner or active member of a competition whose current nonwithdrawn snapshot references the photo; never public, never automatically a directory image; no-store
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        default:
+          $ref: '#/components/responses/MealError'
+    delete:
+      operationId: discardMyUnattachedMealPhoto
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Removes an owner-controlled staged upload; attached/history photos cannot be deleted through this endpoint
+        default:
+          $ref: '#/components/responses/MealError'
   /venues:
     get:
       operationId: listVenues
@@ -730,6 +931,27 @@ components:
       schema:
         type: string
   requestBodies:
+    MealSave:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MealSave'
+    MealChange:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [requestId, version]
+            properties:
+              requestId: { type: string, format: uuid }
+              version:
+                type: integer
+                format: int64
+                minimum: 1
+                description: Source version for archival, entry version for withdrawal
     Token:
       required: true
       content:
@@ -743,6 +965,22 @@ components:
                 type: string
                 pattern: '^[A-Za-z0-9_-]{43}$'
   responses:
+    Meal:
+      description: Owner-only current source and its independently retained competition snapshots; request replay returns the current source without another mutation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Meal'
+    MealError:
+      description: Rejected atomically; competitionId identifies a failing selected target without exposing its metadata
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, competitionId]
+            properties:
+              error: { type: string }
+              competitionId: { type: string, format: uuid, nullable: true }
     Competition:
       description: Competition metadata and viewer's role, never member activity or private authentication data
       content:
@@ -762,6 +1000,156 @@ components:
           schema:
             $ref: '#/components/schemas/AuthError'
   schemas:
+    MealItem:
+      type: object
+      additionalProperties: false
+      required: [name, wholeQuantity, unitHundredths, partialHundredths]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        wholeQuantity: { type: integer, minimum: 0, maximum: 100 }
+        unitHundredths: { type: integer, minimum: 1, maximum: 10000 }
+        partialHundredths:
+          type: integer
+          minimum: 0
+          maximum: 9999
+          description: Less than unitHundredths; each item must have a positive whole quantity or partial length
+    MealContent:
+      type: object
+      additionalProperties: false
+      required: [eatenAt, location, notes, items, photoIds]
+      properties:
+        eatenAt:
+          {
+            type: string,
+            format: date-time,
+            description: Nonfuture instant since 1970,
+            at most millisecond precision,
+          }
+        venueId: { type: string, format: uuid, nullable: true }
+        location:
+          {
+            type: string,
+            maxLength: 300,
+            description: Private free-text label,
+            required when venueId is absent; empty when venueId is selected,
+          }
+        notes: { type: string, maxLength: 2000 }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/MealItem'
+        photoIds:
+          type: array
+          maxItems: 5
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    MealSave:
+      type: object
+      additionalProperties: false
+      required: [requestId, version, content, competitionIds]
+      properties:
+        requestId:
+          {
+            type: string,
+            format: uuid,
+            description: Reuse the same key and payload when retrying an uncertain request; a changed payload requires a new key,
+          }
+        version:
+          {
+            type: integer,
+            format: int64,
+            minimum: 0,
+            description: Zero for create; current source version for update,
+          }
+        content:
+          $ref: '#/components/schemas/MealContent'
+        competitionIds:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          description: Explicit targets to submit/update atomically; unselected existing snapshots are untouched. All nonwithdrawn affected competitions must allow sharing. Active membership and eating/submission windows are checked using database time after ordered locks.
+          items: { type: string, format: uuid }
+    MealRevision:
+      type: object
+      required:
+        [
+          id,
+          version,
+          eatenAt,
+          venueId,
+          location,
+          notes,
+          items,
+          photoIds,
+          totalHundredths,
+          wholeHotDogs,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer, format: int64 }
+        eatenAt: { type: string, format: date-time }
+        venueId: { type: string, format: uuid, nullable: true }
+        location:
+          {
+            type: string,
+            description: Immutable venue name/address snapshot or explicitly submitted private location label,
+          }
+        notes: { type: string }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MealItem'
+        photoIds:
+          type: array
+          items: { type: string, format: uuid }
+        totalHundredths: { type: integer, format: int64, minimum: 1 }
+        wholeHotDogs: { type: integer, minimum: 0 }
+    MealSubmission:
+      type: object
+      required:
+        [
+          competitionId,
+          competitionName,
+          revisionId,
+          totalHundredths,
+          wholeHotDogs,
+          withdrawn,
+          version,
+          acceptsChanges,
+        ]
+      properties:
+        competitionId: { type: string, format: uuid }
+        competitionName: { type: string }
+        revisionId: { type: string, format: uuid }
+        totalHundredths: { type: integer, format: int64 }
+        wholeHotDogs: { type: integer }
+        withdrawn: { type: boolean }
+        version: { type: integer, format: int64 }
+        acceptsChanges: { type: boolean }
+    Meal:
+      type: object
+      required: [id, version, archived, revision, submissions]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer, format: int64 }
+        archived: { type: boolean }
+        revision:
+          $ref: '#/components/schemas/MealRevision'
+        submissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/MealSubmission'
+    MealPage:
+      type: object
+      required: [items, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Meal'
+        hasMore: { type: boolean }
     MenuInput:
       type: object
       additionalProperties: false

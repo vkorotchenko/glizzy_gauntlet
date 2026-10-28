@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { loadSession } from '../auth/api'
 import * as api from './api'
 import { FeaturedVenues } from '../directory/DirectoryPages'
+import { CompetitionMeals } from '../meals/MealPages'
 import {
   formatTime,
   fromInstant,
@@ -604,7 +605,8 @@ export function CompetitionPage() {
             </p>
           )}
           <p className="form-note">
-            Meal logging, standings, and final recaps are not implemented yet.
+            Standings, progress dashboards, and final recaps are not implemented
+            yet.
           </p>
           {item.viewerRole === 'ORGANIZER' && (
             <div className="competition-actions">
@@ -630,6 +632,7 @@ export function CompetitionPage() {
             </div>
           )}
           <ErrorNotice error={publish.error} />
+          {item.viewerRole !== 'NONE' && <CompetitionMeals id={id} />}
           {item.viewerRole === 'NONE' &&
             item.visibility === 'PUBLIC' &&
             ['SCHEDULED', 'ACTIVE'].includes(item.phase) &&

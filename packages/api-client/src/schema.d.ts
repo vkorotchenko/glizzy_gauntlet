@@ -4,6 +4,147 @@
  */
 
 export interface paths {
+    "/meals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listMyMeals"];
+        put?: never;
+        post: operations["createMeal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/meals/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getMyMeal"];
+        put: operations["reviseMyMeal"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/meals/{id}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getMyMealHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/meals/{id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["archiveMyMeal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/meals/{id}/submissions/{competition}/withdraw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                competition: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["withdrawMySubmission"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/meals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getCompetitionMealActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/meal-photos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listMyUnattachedMealPhotos"];
+        put?: never;
+        post: operations["uploadPrivateMealPhoto"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/meal-photos/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get: operations["getPrivateMealPhoto"];
+        put?: never;
+        post?: never;
+        delete: operations["discardMyUnattachedMealPhoto"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/venues": {
         parameters: {
             query?: never;
@@ -508,6 +649,87 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        MealItem: {
+            name: string;
+            wholeQuantity: number;
+            unitHundredths: number;
+            /** @description Less than unitHundredths; each item must have a positive whole quantity or partial length */
+            partialHundredths: number;
+        };
+        MealContent: {
+            /**
+             * Format: date-time
+             * @description Nonfuture instant since 1970
+             */
+            eatenAt: string;
+            /** Format: uuid */
+            venueId?: string | null;
+            /** @description Private free-text label */
+            location: string;
+            notes: string;
+            items: components["schemas"]["MealItem"][];
+            photoIds: string[];
+        };
+        MealSave: {
+            /**
+             * Format: uuid
+             * @description Reuse the same key and payload when retrying an uncertain request; a changed payload requires a new key
+             */
+            requestId: string;
+            /**
+             * Format: int64
+             * @description Zero for create; current source version for update
+             */
+            version: number;
+            content: components["schemas"]["MealContent"];
+            /** @description Explicit targets to submit/update atomically; unselected existing snapshots are untouched. All nonwithdrawn affected competitions must allow sharing. Active membership and eating/submission windows are checked using database time after ordered locks. */
+            competitionIds: string[];
+        };
+        MealRevision: {
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            version: number;
+            /** Format: date-time */
+            eatenAt: string;
+            /** Format: uuid */
+            venueId: string | null;
+            /** @description Immutable venue name/address snapshot or explicitly submitted private location label */
+            location: string;
+            notes: string;
+            items: components["schemas"]["MealItem"][];
+            photoIds: string[];
+            /** Format: int64 */
+            totalHundredths: number;
+            wholeHotDogs: number;
+        };
+        MealSubmission: {
+            /** Format: uuid */
+            competitionId: string;
+            competitionName: string;
+            /** Format: uuid */
+            revisionId: string;
+            /** Format: int64 */
+            totalHundredths: number;
+            wholeHotDogs: number;
+            withdrawn: boolean;
+            /** Format: int64 */
+            version: number;
+            acceptsChanges: boolean;
+        };
+        Meal: {
+            /** Format: uuid */
+            id: string;
+            /** Format: int64 */
+            version: number;
+            archived: boolean;
+            revision: components["schemas"]["MealRevision"];
+            submissions: components["schemas"]["MealSubmission"][];
+        };
+        MealPage: {
+            items: components["schemas"]["Meal"][];
+            hasMore: boolean;
+        };
         MenuInput: {
             name: string;
             description: string;
@@ -664,6 +886,28 @@ export interface components {
         };
     };
     responses: {
+        /** @description Owner-only current source and its independently retained competition snapshots; request replay returns the current source without another mutation */
+        Meal: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Meal"];
+            };
+        };
+        /** @description Rejected atomically; competitionId identifies a failing selected target without exposing its metadata */
+        MealError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": {
+                    error: string;
+                    /** Format: uuid */
+                    competitionId: string | null;
+                };
+            };
+        };
         /** @description Competition metadata and viewer's role, never member activity or private authentication data */
         Competition: {
             headers: {
@@ -698,6 +942,24 @@ export interface components {
         CsrfHeader: string;
     };
     requestBodies: {
+        MealSave: {
+            content: {
+                "application/json": components["schemas"]["MealSave"];
+            };
+        };
+        MealChange: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    requestId: string;
+                    /**
+                     * Format: int64
+                     * @description Source version for archival, entry version for withdrawal
+                     */
+                    version: number;
+                };
+            };
+        };
         Token: {
             content: {
                 "application/json": {
@@ -711,6 +973,275 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listMyMeals: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                archived?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current user's private source meals, each counted once regardless of submissions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MealPage"];
+                };
+            };
+            default: components["responses"]["MealError"];
+        };
+    };
+    createMeal: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["MealSave"];
+        responses: {
+            201: components["responses"]["Meal"];
+            default: components["responses"]["MealError"];
+        };
+    };
+    getMyMeal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Meal"];
+            default: components["responses"]["MealError"];
+        };
+    };
+    reviseMyMeal: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["MealSave"];
+        responses: {
+            200: components["responses"]["Meal"];
+            default: components["responses"]["MealError"];
+        };
+    };
+    getMyMealHistory: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner-only immutable source revisions, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["MealRevision"][];
+                        hasMore: boolean;
+                    };
+                };
+            };
+            default: components["responses"]["MealError"];
+        };
+    };
+    archiveMyMeal: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["MealChange"];
+        responses: {
+            200: components["responses"]["Meal"];
+            default: components["responses"]["MealError"];
+        };
+    };
+    withdrawMySubmission: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                competition: string;
+            };
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["MealChange"];
+        responses: {
+            200: components["responses"]["Meal"];
+            default: components["responses"]["MealError"];
+        };
+    };
+    getCompetitionMealActivity: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active members only; submitted snapshots, not private source edits or withdrawn entries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            /** Format: uuid */
+                            id: string;
+                            displayName: string;
+                            revision: components["schemas"]["MealRevision"];
+                        }[];
+                        hasMore: boolean;
+                    };
+                };
+            };
+            default: components["responses"]["MealError"];
+        };
+    };
+    listMyUnattachedMealPhotos: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current user's private staged uploads, at most 200; no directory photo reuse */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+            default: components["responses"]["MealError"];
+        };
+    };
+    uploadPrivateMealPhoto: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Private sanitized JPEG/thumbnail; same content, byte, pixel and dimension limits as directory photos, with a separate 200-photo/account limit and shared global storage budget */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                    };
+                };
+            };
+            default: components["responses"]["MealError"];
+        };
+    };
+    getPrivateMealPhoto: {
+        parameters: {
+            query?: {
+                thumbnail?: boolean;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Owner or active member of a competition whose current nonwithdrawn snapshot references the photo; never public, never automatically a directory image; no-store */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": string;
+                };
+            };
+            default: components["responses"]["MealError"];
+        };
+    };
+    discardMyUnattachedMealPhoto: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removes an owner-controlled staged upload; attached/history photos cannot be deleted through this endpoint */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["MealError"];
+        };
+    };
     listVenues: {
         parameters: {
             query?: {

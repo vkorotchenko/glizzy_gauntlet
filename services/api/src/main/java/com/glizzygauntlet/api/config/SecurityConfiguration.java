@@ -64,6 +64,8 @@ class SecurityConfiguration {
                     .authenticated()
                     .requestMatchers("/api/v1/venues/**", "/api/v1/directory/**")
                     .authenticated()
+                    .requestMatchers("/api/v1/meals/**", "/api/v1/meal-photos/**")
+                    .authenticated()
                     .anyRequest()
                     .denyAll())
         .securityContext(context -> context.securityContextRepository(contexts))

@@ -20,6 +20,7 @@ spring:
   jackson:
     deserialization:
       fail-on-unknown-properties: true
+      accept-float-as-int: false
   servlet:
     multipart:
       max-file-size: 5MB

@@ -31,6 +31,7 @@ jobs:
       - run: npm run test:e2e
         env:
           E2E_DIRECTORY_DB_CONTAINER: glizzy-gauntlet-db-1
+          E2E_TEST_DB_CONTAINER: glizzy-gauntlet-db-1
       - name: Stop the local stack
         if: always()
         run: docker compose --env-file .env.example -f infra/compose.yaml -f infra/compose.dev.yaml down --volumes

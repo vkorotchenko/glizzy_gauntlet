@@ -110,6 +110,8 @@ describe('competition screens', () => {
           return Response.json({ items: [], hasMore: false })
         if (request.url.includes('/members'))
           return Response.json({ items: [], hasMore: false })
+        if (request.url.includes('/meals?'))
+          return Response.json({ items: [], hasMore: false })
         return Response.json(draft)
       }),
     )

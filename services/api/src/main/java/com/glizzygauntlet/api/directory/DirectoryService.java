@@ -222,8 +222,10 @@ public class DirectoryService {
             >= 200) throw error(HttpStatus.CONFLICT, "PHOTO_LIMIT");
     var sanitized = images.sanitize(bytes);
     long size = sanitized.image().length + sanitized.thumbnail().length;
-    if (count("SELECT COALESCE(sum(bytes), 0) FROM directory_photos") + size > storageLimit)
-      throw error(HttpStatus.CONFLICT, "STORAGE_LIMIT");
+    if (count(
+                "SELECT (SELECT COALESCE(sum(bytes), 0) FROM directory_photos) + (SELECT COALESCE(sum(bytes), 0) FROM meal_photos)")
+            + size
+        > storageLimit) throw error(HttpStatus.CONFLICT, "STORAGE_LIMIT");
     UUID photo = UUID.randomUUID();
     TransactionSynchronizationManager.registerSynchronization(
         new TransactionSynchronization() {

@@ -1,10 +1,10 @@
 # Glizzy Gauntlet
 
-A web-based, friendly hot-dog competition tracker. The **foundation, accounts, competitions, and venue-directory milestones** are implemented; the product is not ready for public deployment.
+A web-based, friendly hot-dog competition tracker. The **foundation, accounts, competitions, venue directory, and meal-logging milestones** are implemented; the product is not ready for public deployment.
 
 The implementation connects React/TypeScript through a thin Node gateway to Spring Boot and PostgreSQL. It includes email magic links, optional Google OIDC, explicitly linked sign-in methods, database-backed sessions, display-name editing, public/private competitions, memberships, revocable invitations, Flyway migrations, a generated API client, and automated checks.
 
-**Not implemented yet:** saved meal logs, progress dashboards, and final recaps. The home page labels its scoring illustration as an example; it does not display invented participant data.
+**Not implemented yet:** standings, progress dashboards, organizer scoring corrections, and final recaps. The home page labels its scoring illustration as an example; it does not display invented participant data.
 
 ## Run locally
 
@@ -26,6 +26,8 @@ Open **http://127.0.0.1:3000**. The first run builds both application images. Th
 Open **My account**, choose email sign-in, and open **http://127.0.0.1:8025** to read the message in the local Mailpit inbox. No email leaves the development stack. Follow the link and explicitly confirm the displayed email address before signing in. You can then change your display name and sign out.
 
 Open **Competitions** to browse public events or your own memberships and drafts. Create a draft, choose its visibility, time zone, dates, written rules, and sharing policy, then publish it when ready.
+
+Open **My meals** to record measured lengths, optional private photos, and a venue or private location label. Saving privately does not submit to a competition: explicitly select each eligible competition when saving.
 
 Mailpit contains sign-in links. It is development-only, binds to loopback, and must never be exposed publicly. Google remains unavailable until you configure your own Google OAuth client.
 
@@ -56,7 +58,7 @@ Only the creator organizes a competition. Drafts are visible only to their organ
 
 You enter times in the selected IANA time zone, not your device's zone. Daylight-saving gaps are rejected. For a repeated hour, choose its first or second occurrence explicitly. Editing preserves the original occurrence and milliseconds. Start/end instants accept up to millisecond precision and are stored in PostgreSQL; the submission cutoff is exactly 24 elapsed hours after the eating end.
 
-Creation, publication, and settings changes require a future start. All settings, including written rules and visibility, lock when a published eating window starts. Updates use a version to reject stale-tab overwrites. Joining is allowed before and during eating, but not during the grace period. A closed submission window is labeled **Submissions closed**, not falsely finalized; saved meals, standings, and recap finalization are still pending.
+Creation, publication, and settings changes require a future start. All settings, including written rules and visibility, lock when a published eating window starts. Updates use a version to reject stale-tab overwrites. Joining is allowed before and during eating, but not during the grace period. A closed submission window is labeled **Submissions closed**, not falsely finalized; standings and recap finalization are still pending.
 
 Organizers can create reusable invitation links for published competitions. Links expire after seven days or when eating ends, whichever comes first. At most 20 unexpired, unrevoked links may exist per competition. Copy each link when created: only its hash is stored, and the original cannot be retrieved. Invitation previews do not automatically join anyone or reveal member identities. If you are signed out, sign in and reopen the invitation to accept it.
 
@@ -120,6 +122,20 @@ Compose persists sanitized files in the API-only `media` volume, outside the gat
 
 Competition organizers can choose up to 20 approved featured venues from their competition page. Featured views follow the competition's draft/private access rules, and hidden listings automatically disappear. Featuring a venue does not grant moderation privileges or promise availability.
 
+## Meals and competition submissions
+
+Each meal contains up to 20 item lines. Record the whole quantity (0-100), measured full length (0.01-100 inches), and any additional partial portion, which must be smaller than the full length. Each line must contribute a whole hot dog or a positive partial portion. Use separate lines for different sizes. Measurements accept at most two decimal places without rounding; the API calculates scores using integer hundredths. Two 8-inch hot dogs plus 3 partial inches score **19.00 inches and 2 whole hot dogs**. No standard size or eating-speed bonus applies.
+
+Choose an approved venue or enter a private location label, eating time, optional notes, and up to five photos. Meal labels and photos never automatically enter the public directory. The source record and immutable revision history belong only to you, including when you organize a competition or hold the site-owner role.
+
+Select target competitions explicitly on every save. You must be an active member, the eating time must fall at or after the competition's start and strictly before its end, and the submission must arrive before the 24-hour grace period ends. Future eating times are rejected. Sharing one meal across multiple nonwithdrawn submissions requires every affected competition to allow shared meals. A failed target rejects the entire save instead of creating a source or partial submissions.
+
+Each selected competition receives a snapshot of that revision, visible only to its active members. Editing privately or choosing different targets leaves unselected and closed snapshots unchanged. Withdrawal is a separate, audited action available before the submission cutoff. **Archiving a source does not withdraw submissions or erase revisions or photos.** Archived sources remain available through **Show archived sources**; this milestone does not implement permanent meal deletion.
+
+Meal photos use the same content validation, metadata stripping, and filesystem storage as directory photos, with a separate 200-photo limit per account and the shared `MEDIA_MAX_BYTES` budget. An unattached upload stays private to its owner and can be discarded. Bound photos remain with revision history. Competition membership grants photo access only through a current, nonwithdrawn snapshot containing that photo; withdrawing the last accessible snapshot revokes member access.
+
+Updates reject stale versions. Mutation requests use a UUID idempotency key: retrying the same payload and key does not create another revision, while reusing a key with different content fails. The form retains its key for an unchanged retry in that editor session. Cutoff checks use database time after acquiring competition locks.
+
 ## Checks
 
 ```bash
@@ -141,6 +157,8 @@ The browser suite checks the real stack, failure/retry behavior, routing boundar
 
 Directory browser checks cover private drafts, image validation/upload, and withdrawal. To include owner approval, public photos, featured venues, hide/restore, and map-outage checks against a **disposable local database only**, set `E2E_DIRECTORY_DB_CONTAINER` to that Compose database container's name. This explicitly permits the test to bootstrap its own generated account as a site owner using `docker exec psql`; never point it at a real user database. CI enables this only on its ephemeral stack.
 
+Meal browser checks cover measured scoring, private photos, access boundaries, and source archival. Set `E2E_TEST_DB_CONTAINER` only for a **disposable local database** to include explicit multi-competition snapshots, frozen submissions, and withdrawal. These fixtures use `docker exec psql` to shift their generated competitions' eating windows; they must never target a real user database. CI enables both database fixtures on its ephemeral stack.
+
 Run `npm run format` and `(cd services/api && ./mvnw spotless:apply)` before checking formatting.
 
 ## API contract
@@ -158,6 +176,8 @@ Commit the generated declarations alongside any contract/controller changes and 
 `GET /api/v1/auth/session` provides the current account, available methods, and a session-bound CSRF token. Send that token in `X-CSRF-TOKEN` for account mutations. `GET/PUT /api/v1/me` act only on the current signed-in account; logout uses `POST /api/v1/auth/logout`.
 
 Competition endpoints start at `/api/v1/competitions`; use `scope=mine` for your memberships/drafts. Creation starts a draft, publication is explicit, and settings updates require the current version. Invitation inspection and acceptance use POST `/api/v1/competition-invitations/inspect` and `/join`. Every mutation, including invitation inspection, requires the session CSRF header.
+
+Meal endpoints start at `/api/v1/meals`, with revision history, source archival, and per-competition withdrawal beneath each meal. `/api/v1/competitions/{id}/meals` exposes member-only submitted snapshots, not private sources. `/api/v1/meal-photos` handles private uploads. Save/archive/withdraw requests require the current source or entry version and a `requestId`; all mutations require the CSRF header.
 
 ## Self-hosting boundaries
 

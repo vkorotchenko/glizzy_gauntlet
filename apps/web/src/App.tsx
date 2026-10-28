@@ -15,6 +15,7 @@ import {
   DirectoryPage,
   VenuePage,
 } from './directory/DirectoryPages'
+import { MealEditorPage, MealPage, MealsPage } from './meals/MealPages'
 
 function ServiceStatus() {
   const [api] = useState(() =>
@@ -78,8 +79,8 @@ function Home() {
             See the game plan <span aria-hidden="true">&rarr;</span>
           </a>
           <p className="preview-note">
-            Project preview. Accounts, competitions, and the venue directory are
-            ready; saved meals and recaps are still in development.
+            Project preview. Accounts, competitions, venues, and meal logging
+            are ready; progress dashboards and recaps are still in development.
           </p>
         </div>
         <div className="score-card" aria-label="Scoring example">
@@ -172,6 +173,9 @@ export default function App() {
           Glizzy Gauntlet
         </Link>
         <nav className="header-links" aria-label="Main navigation">
+          <Link className="account-link" to="/meals">
+            My meals
+          </Link>
           <Link className="account-link" to="/venues">
             Venues
           </Link>
@@ -189,6 +193,10 @@ export default function App() {
           <Route path="/sign-in" element={<SignInPage />} />
           <Route path="/sign-in/confirm" element={<ConfirmLinkPage />} />
           <Route path="/account" element={<AccountPage />} />
+          <Route path="/meals" element={<MealsPage />} />
+          <Route path="/meals/new" element={<MealEditorPage />} />
+          <Route path="/meals/:id" element={<MealPage />} />
+          <Route path="/meals/:id/edit" element={<MealEditorPage />} />
           <Route path="/venues" element={<DirectoryPage />} />
           <Route path="/venues/new" element={<ContributionEditorPage />} />
           <Route path="/venues/:id" element={<VenuePage />} />
