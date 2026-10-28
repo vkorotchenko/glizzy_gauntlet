@@ -3,6 +3,21 @@ import { useQuery } from '@tanstack/react-query'
 import { createApiClient } from '@glizzy/api-client'
 import { Link, Route, Routes } from 'react-router-dom'
 import { AccountPage, ConfirmLinkPage, SignInPage } from './auth/AuthPages'
+import {
+  CompetitionEditorPage,
+  CompetitionPage,
+  CompetitionsPage,
+  InvitationPage,
+} from './competitions/CompetitionPages'
+import {
+  ContributionEditorPage,
+  ContributionPage,
+  DirectoryPage,
+  VenuePage,
+} from './directory/DirectoryPages'
+import { MealEditorPage, MealPage, MealsPage } from './meals/MealPages'
+import { ProgressPage } from './progress/ProgressPages'
+import { CorrectionsPage, RecapPage } from './recaps/RecapPages'
 
 function ServiceStatus() {
   const [api] = useState(() =>
@@ -66,7 +81,9 @@ function Home() {
             See the game plan <span aria-hidden="true">&rarr;</span>
           </a>
           <p className="preview-note">
-            Project preview. Sign-in is ready; competitions are next.
+            Project preview. Accounts, competitions, venues, meal logging,
+            standings, personal progress, and versioned recaps are implemented.
+            Self-hosting hardening remains.
           </p>
         </div>
         <div className="score-card" aria-label="Scoring example">
@@ -158,9 +175,20 @@ export default function App() {
           </span>
           Glizzy Gauntlet
         </Link>
-        <Link className="account-link" to="/account">
-          My account
-        </Link>
+        <nav className="header-links" aria-label="Main navigation">
+          <Link className="account-link" to="/meals">
+            My meals
+          </Link>
+          <Link className="account-link" to="/venues">
+            Venues
+          </Link>
+          <Link className="account-link" to="/competitions">
+            Competitions
+          </Link>
+          <Link className="account-link" to="/account">
+            My account
+          </Link>
+        </nav>
       </header>
       <main id="main">
         <Routes>
@@ -168,6 +196,35 @@ export default function App() {
           <Route path="/sign-in" element={<SignInPage />} />
           <Route path="/sign-in/confirm" element={<ConfirmLinkPage />} />
           <Route path="/account" element={<AccountPage />} />
+          <Route path="/meals" element={<MealsPage />} />
+          <Route path="/meals/new" element={<MealEditorPage />} />
+          <Route path="/meals/:id" element={<MealPage />} />
+          <Route path="/meals/:id/edit" element={<MealEditorPage />} />
+          <Route path="/venues" element={<DirectoryPage />} />
+          <Route path="/venues/new" element={<ContributionEditorPage />} />
+          <Route path="/venues/:id" element={<VenuePage />} />
+          <Route
+            path="/venues/:id/suggest"
+            element={<ContributionEditorPage />}
+          />
+          <Route
+            path="/directory/contributions/:id"
+            element={<ContributionPage />}
+          />
+          <Route path="/competitions" element={<CompetitionsPage />} />
+          <Route path="/competitions/new" element={<CompetitionEditorPage />} />
+          <Route path="/competitions/:id" element={<CompetitionPage />} />
+          <Route path="/competitions/:id/progress" element={<ProgressPage />} />
+          <Route path="/competitions/:id/recap" element={<RecapPage />} />
+          <Route
+            path="/competitions/:id/corrections"
+            element={<CorrectionsPage />}
+          />
+          <Route
+            path="/competitions/:id/settings"
+            element={<CompetitionEditorPage />}
+          />
+          <Route path="/join" element={<InvitationPage />} />
           <Route
             path="*"
             element={

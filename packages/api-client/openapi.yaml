@@ -5,6 +5,874 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /meals:
+    get:
+      operationId: listMyMeals
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - {
+            name: archived,
+            in: query,
+            schema: { type: boolean, default: false },
+          }
+      responses:
+        '200':
+          description: Current user's private source meals, each counted once regardless of submissions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MealPage'
+        default:
+          $ref: '#/components/responses/MealError'
+    post:
+      operationId: createMeal
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/MealSave'
+      responses:
+        '201':
+          $ref: '#/components/responses/Meal'
+        default:
+          $ref: '#/components/responses/MealError'
+  /meals/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getMyMeal
+      responses:
+        '200':
+          $ref: '#/components/responses/Meal'
+        default:
+          $ref: '#/components/responses/MealError'
+    put:
+      operationId: reviseMyMeal
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/MealSave'
+      responses:
+        '200':
+          $ref: '#/components/responses/Meal'
+        default:
+          $ref: '#/components/responses/MealError'
+  /meals/{id}/history:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getMyMealHistory
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Owner-only immutable source revisions, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MealRevision'
+                  hasMore: { type: boolean }
+        default:
+          $ref: '#/components/responses/MealError'
+  /meals/{id}/archive:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    post:
+      operationId: archiveMyMeal
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/MealChange'
+      responses:
+        '200':
+          $ref: '#/components/responses/Meal'
+        default:
+          $ref: '#/components/responses/MealError'
+  /meals/{id}/submissions/{competition}/withdraw:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+      - name: competition
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: withdrawMySubmission
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/MealChange'
+      responses:
+        '200':
+          $ref: '#/components/responses/Meal'
+        default:
+          $ref: '#/components/responses/MealError'
+  /competitions/{id}/recap:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getCompetitionRecap
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/ResultVersion'
+      responses:
+        '200':
+          description: Immutable final or revised rankings and totals; public only for published public competitions. Performs idempotent deadline catch-up under the competition lock. No meal details, locations, correction reasons, or account IDs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recap'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/recap/history:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getRecapHistory
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Twenty immutable result-version descriptors per page, newest first; same visibility and deadline catch-up as recap
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ResultVersion'
+                  hasMore: { type: boolean }
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/recap/highlights:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getRecapHighlights
+      parameters:
+        - $ref: '#/components/parameters/ResultVersion'
+      responses:
+        '200':
+          description: Active members only; submitted snapshot highlights for the specified immutable result revision. Scoring-excluded entries do not contribute. Busiest-day ties choose the earliest local day.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecapHighlights'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/entries/{entry}/corrections:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+      - name: entry
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: correctCompetitionScore
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScoreCorrection'
+      responses:
+        '200':
+          description: Organizer-only after the deadline; atomically audits before/after scores and publishes a new immutable recap revision. Does not change the source meal, measured items, location, photos, other competitions, or a withdrawn entry. Same request key/payload returns the original receipt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CorrectionReceipt'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/corrections:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getScoreCorrectionAudit
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Active members only; audited reasons and score decisions, twenty per page, newest first. Never part of the public recap projection.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ScoreCorrectionAudit'
+                  hasMore: { type: boolean }
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/standings:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getCompetitionStandings
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Public only for published public competitions; otherwise competition visibility applies. Twenty participants per page. Rank uses inches alone (1, 1, 3); active members with no submissions score zero. After finalization, serves the latest immutable result rankings and frozen display names. No account IDs or meal details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Standings'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/progress:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getPersonalProgress
+      parameters:
+        - name: dayPage
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 1000, default: 0 }
+        - name: placePage
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 1000, default: 0 }
+      responses:
+        '200':
+          description: Current active member's own nonwithdrawn snapshots in this competition only. Thirty calendar days per page, newest window first, ordered chronologically within the page, including zero days; cumulative totals include earlier pages. Competition IANA time zone defines day boundaries. Twenty places and five recent meals; place labels come from submitted revisions. Archived sources still count. No user selector.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalProgress'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/meals:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getCompetitionMealActivity
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Active members only; submitted snapshots, not private source edits or withdrawn entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        [
+                          id,
+                          displayName,
+                          revision,
+                          version,
+                          scoreExcluded,
+                          totalHundredths,
+                          wholeHotDogs,
+                        ]
+                      properties:
+                        id: { type: string, format: uuid }
+                        displayName: { type: string }
+                        revision:
+                          $ref: '#/components/schemas/MealRevision'
+                        version: { type: integer, format: int64 }
+                        scoreExcluded: { type: boolean }
+                        totalHundredths: { type: integer, format: int64 }
+                        wholeHotDogs: { type: integer }
+                  hasMore: { type: boolean }
+        default:
+          $ref: '#/components/responses/MealError'
+  /meal-photos:
+    get:
+      operationId: listMyUnattachedMealPhotos
+      responses:
+        '200':
+          description: Current user's private staged uploads, at most 200; no directory photo reuse
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string, format: uuid }
+        default:
+          $ref: '#/components/responses/MealError'
+    post:
+      operationId: uploadPrivateMealPhoto
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201':
+          description: Private sanitized JPEG/thumbnail; same content, byte, pixel and dimension limits as directory photos, with a separate 200-photo/account limit and shared global storage budget
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id]
+                properties:
+                  id: { type: string, format: uuid }
+        default:
+          $ref: '#/components/responses/MealError'
+  /meal-photos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getPrivateMealPhoto
+      parameters:
+        - {
+            name: thumbnail,
+            in: query,
+            schema: { type: boolean, default: false },
+          }
+      responses:
+        '200':
+          description: Owner or active member of a competition whose current nonwithdrawn snapshot references the photo; never public, never automatically a directory image; no-store
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        default:
+          $ref: '#/components/responses/MealError'
+    delete:
+      operationId: discardMyUnattachedMealPhoto
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Removes an owner-controlled staged upload; attached/history photos cannot be deleted through this endpoint
+        default:
+          $ref: '#/components/responses/MealError'
+  /venues:
+    get:
+      operationId: listVenues
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - {
+            name: south,
+            in: query,
+            schema: { type: number, minimum: -90, maximum: 90 },
+          }
+        - {
+            name: north,
+            in: query,
+            schema: { type: number, minimum: -90, maximum: 90 },
+          }
+        - {
+            name: west,
+            in: query,
+            schema: { type: number, minimum: -180, maximum: 180 },
+          }
+        - {
+            name: east,
+            in: query,
+            schema: { type: number, minimum: -180, maximum: 180 },
+          }
+      responses:
+        '200':
+          description: Approved visible venues, ordered by name; supply all four bounds together, west no greater than east
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VenuePage'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /venues/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getVenue
+      responses:
+        '200':
+          description: Current approved public venue revision only
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Venue'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /venues/{id}/visibility:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    put:
+      operationId: setVenueVisibility
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [hidden, reason]
+              properties:
+                hidden: { type: boolean }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '204':
+          description: Site-owner-only audited visibility change; hidden venues and their photos disappear from public views and featured lists
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /directory/contributions:
+    get:
+      operationId: listDirectoryContributions
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - name: scope
+          in: query
+          schema: { type: string, enum: [mine, pending, all], default: mine }
+      responses:
+        '200':
+          description: Own contribution history, or site-owner-only pending queue/all contribution history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContributionPage'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    post:
+      operationId: createDirectoryContribution
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DirectoryInput'
+      responses:
+        '201':
+          description: Private draft; attach optional photos before explicitly submitting for review
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contribution'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /directory/contributions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getDirectoryContribution
+      responses:
+        '200':
+          description: Contributor or site-owner view, never public
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contribution'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    delete:
+      operationId: discardDirectoryContribution
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Contributor discards a nonapproved contribution and removes its photos
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /directory/contributions/{id}/submit:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    post:
+      operationId: submitDirectoryContribution
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Draft locked and placed in the moderation queue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contribution'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /directory/contributions/{id}/photos:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    post:
+      operationId: uploadDirectoryPhoto
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                menuItemId: { type: string, format: uuid }
+      responses:
+        '201':
+          description: Sanitized JPEG and thumbnail; actual JPEG/PNG content only, at most 5 MiB, 6000 pixels per side and 12 megapixels; maximum 10 photos per draft and 200 per contributor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DirectoryPhoto'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /directory/contributions/{id}/review:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    post:
+      operationId: reviewDirectoryContribution
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [approve, reason]
+              properties:
+                approve: { type: boolean }
+                reason: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '200':
+          description: Site-owner-only audited decision; approval replaces the entire venue and photo revision, refusing stale updates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contribution'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /directory/photos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getDirectoryPhoto
+      parameters:
+        - name: thumbnail
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Reencoded image only; public only when associated with a currently visible approved venue revision; otherwise contributor/site owner only, always no-store
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/featured-venues:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: listFeaturedVenues
+      responses:
+        '200':
+          description: Approved visible featured venues, with the competition's draft/private access rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Venue'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/featured-venues/{venue}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+      - name: venue
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: featureVenue
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Organizer-only idempotent addition; maximum 20 featured venues
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    delete:
+      operationId: unfeatureVenue
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Organizer-only idempotent removal
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions:
+    get:
+      operationId: listCompetitions
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum: [public, mine]
+            default: public
+      responses:
+        '200':
+          description: Published public competitions, or the signed-in user's active memberships and drafts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Competition'
+                  hasMore:
+                    type: boolean
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    post:
+      operationId: createCompetition
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompetitionSettings'
+      responses:
+        '201':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: getCompetition
+      responses:
+        '200':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    put:
+      operationId: updateCompetition
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version, settings]
+              properties:
+                version:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                settings:
+                  $ref: '#/components/schemas/CompetitionSettings'
+      responses:
+        '200':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/publish:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    post:
+      operationId: publishCompetition
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version]
+              properties:
+                version:
+                  type: integer
+                  format: int64
+                  minimum: 0
+      responses:
+        '200':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/join:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    post:
+      operationId: joinCompetition
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/members:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: listCompetitionMembers
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Member-only directory; no emails, identities, or other competitions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, hasMore]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CompetitionMember'
+                  hasMore:
+                    type: boolean
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/members/{user}/exclude:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+      - name: user
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: excludeCompetitionMember
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+      responses:
+        '204':
+          description: Excluded from joining and member access; action and reason audited
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/invitations:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: listCompetitionInvitations
+      responses:
+        '200':
+          description: Organizer-only metadata, active invitations first, at most 50; no bearer tokens
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CompetitionInvitation'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    post:
+      operationId: createCompetitionInvitation
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '201':
+          description: Link shown once; reusable until revoked, seven days, or eating ends, whichever comes first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, inviteUrl, expiresAt]
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  inviteUrl:
+                    type: string
+                    format: uri
+                  expiresAt:
+                    type: string
+                    format: date-time
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/invitations/{invitation}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+      - name: invitation
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: revokeCompetitionInvitation
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Invitation revoked
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competition-invitations/inspect:
+    post:
+      operationId: inspectCompetitionInvitation
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/Token'
+      responses:
+        '200':
+          description: Limited preview for an invitation holder; does not join or reveal members
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InvitationPreview'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competition-invitations/join:
+    post:
+      operationId: joinCompetitionInvitation
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        $ref: '#/components/requestBodies/Token'
+      responses:
+        '200':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
   /auth/session:
     get:
       operationId: getSession
@@ -196,6 +1064,26 @@ paths:
                 $ref: '#/components/schemas/ServiceStatus'
 components:
   parameters:
+    ResultVersion:
+      name: version
+      in: query
+      description: Positive result revision; omit for latest
+      schema: { type: integer, format: int64, minimum: 1 }
+    CompetitionId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        default: 0
+        minimum: 0
+        maximum: 1000
     CsrfHeader:
       name: X-CSRF-TOKEN
       in: header
@@ -203,6 +1091,27 @@ components:
       schema:
         type: string
   requestBodies:
+    MealSave:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MealSave'
+    MealChange:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [requestId, version]
+            properties:
+              requestId: { type: string, format: uuid }
+              version:
+                type: integer
+                format: int64
+                minimum: 1
+                description: Source version for archival, entry version for withdrawal
     Token:
       required: true
       content:
@@ -216,6 +1125,34 @@ components:
                 type: string
                 pattern: '^[A-Za-z0-9_-]{43}$'
   responses:
+    Meal:
+      description: Owner-only current source and its independently retained competition snapshots; request replay returns the current source without another mutation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Meal'
+    MealError:
+      description: Rejected atomically; competitionId identifies a failing selected target without exposing its metadata
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, competitionId]
+            properties:
+              error: { type: string }
+              competitionId: { type: string, format: uuid, nullable: true }
+    Competition:
+      description: Competition metadata and viewer's role, never member activity or private authentication data
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Competition'
+    CompetitionError:
+      description: Request rejected; private and draft competitions appear not found to outsiders
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
     AuthError:
       description: Authentication request rejected
       content:
@@ -223,6 +1160,610 @@ components:
           schema:
             $ref: '#/components/schemas/AuthError'
   schemas:
+    ResultVersion:
+      type: object
+      required: [version, state, createdAt, calculationVersion]
+      properties:
+        version: { type: integer, format: int64, minimum: 1 }
+        state: { type: string, enum: [FINAL, REVISED] }
+        createdAt: { type: string, format: date-time }
+        calculationVersion: { type: integer, minimum: 1 }
+    Recap:
+      type: object
+      required:
+        [
+          result,
+          participantCount,
+          totalHundredths,
+          wholeHotDogs,
+          standings,
+          hasMore,
+        ]
+      properties:
+        result:
+          $ref: '#/components/schemas/ResultVersion'
+        participantCount: { type: integer, format: int64 }
+        totalHundredths: { type: integer, format: int64 }
+        wholeHotDogs: { type: integer, format: int64 }
+        standings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Standing'
+        hasMore: { type: boolean }
+    RecapHighlights:
+      type: object
+      required:
+        [
+          resultVersion,
+          mealCount,
+          venueCount,
+          privateLocationCount,
+          largestMealHundredths,
+          busiestDay,
+          busiestDayHundredths,
+          timeZone,
+          places,
+        ]
+      properties:
+        resultVersion: { type: integer, format: int64 }
+        mealCount: { type: integer, format: int64 }
+        venueCount: { type: integer, format: int64 }
+        privateLocationCount: { type: integer, format: int64 }
+        largestMealHundredths: { type: integer, format: int64 }
+        busiestDay: { type: string, format: date, nullable: true }
+        busiestDayHundredths: { type: integer, format: int64 }
+        timeZone: { type: string }
+        places:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            required: [location, directoryVenue, mealCount, totalHundredths]
+            properties:
+              location: { type: string }
+              directoryVenue: { type: boolean }
+              mealCount: { type: integer, format: int64 }
+              totalHundredths: { type: integer, format: int64 }
+    ScoreCorrection:
+      type: object
+      additionalProperties: false
+      required:
+        [requestId, version, totalHundredths, wholeHotDogs, excluded, reason]
+      properties:
+        requestId: { type: string, format: uuid }
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Current competition-entry version, not source or result version
+        totalHundredths:
+          { type: integer, format: int64, minimum: 1, maximum: 20199980 }
+        wholeHotDogs: { type: integer, minimum: 0, maximum: 2000 }
+        excluded:
+          type: boolean
+          description: Exclude only from scoring, not membership or existing member-visible snapshots
+        reason: { type: string, minLength: 1, maxLength: 500 }
+    CorrectionReceipt:
+      type: object
+      required: [resultVersion, entryVersion]
+      properties:
+        resultVersion: { type: integer, format: int64 }
+        entryVersion: { type: integer, format: int64 }
+    ScoreCorrectionAudit:
+      type: object
+      required:
+        [
+          entryId,
+          actorDisplayName,
+          reason,
+          createdAt,
+          beforeTotalHundredths,
+          beforeWholeHotDogs,
+          beforeExcluded,
+          afterTotalHundredths,
+          afterWholeHotDogs,
+          afterExcluded,
+          resultVersion,
+        ]
+      properties:
+        entryId: { type: string, format: uuid }
+        actorDisplayName: { type: string }
+        reason: { type: string }
+        createdAt: { type: string, format: date-time }
+        beforeTotalHundredths: { type: integer, format: int64 }
+        beforeWholeHotDogs: { type: integer }
+        beforeExcluded: { type: boolean }
+        afterTotalHundredths: { type: integer, format: int64 }
+        afterWholeHotDogs: { type: integer }
+        afterExcluded: { type: boolean }
+        resultVersion: { type: integer, format: int64 }
+    Standing:
+      type: object
+      required: [rank, displayName, totalHundredths, wholeHotDogs]
+      properties:
+        rank: { type: integer, format: int64, minimum: 1 }
+        displayName: { type: string }
+        totalHundredths: { type: integer, format: int64, minimum: 0 }
+        wholeHotDogs: { type: integer, format: int64, minimum: 0 }
+    Standings:
+      type: object
+      required: [items, hasMore, provisional]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Standing'
+        hasMore: { type: boolean }
+        provisional: { type: boolean }
+    ProgressDay:
+      type: object
+      required:
+        [date, totalHundredths, wholeHotDogs, mealCount, cumulativeHundredths]
+      properties:
+        date: { type: string, format: date }
+        totalHundredths: { type: integer, format: int64, minimum: 0 }
+        wholeHotDogs: { type: integer, format: int64, minimum: 0 }
+        mealCount: { type: integer, format: int64, minimum: 0 }
+        cumulativeHundredths: { type: integer, format: int64, minimum: 0 }
+    ProgressPlace:
+      type: object
+      required: [venueId, location, mealCount, totalHundredths]
+      properties:
+        venueId: { type: string, format: uuid, nullable: true }
+        location: { type: string }
+        mealCount: { type: integer, format: int64, minimum: 1 }
+        totalHundredths: { type: integer, format: int64, minimum: 0 }
+    ProgressMeal:
+      type: object
+      required:
+        [mealId, revisionId, eatenAt, location, totalHundredths, wholeHotDogs]
+      properties:
+        mealId: { type: string, format: uuid }
+        revisionId: { type: string, format: uuid }
+        eatenAt: { type: string, format: date-time }
+        location: { type: string }
+        totalHundredths: { type: integer, format: int64, minimum: 1 }
+        wholeHotDogs: { type: integer, format: int64, minimum: 0 }
+    PersonalProgress:
+      type: object
+      required:
+        [
+          timeZone,
+          provisional,
+          rank,
+          totalHundredths,
+          wholeHotDogs,
+          mealCount,
+          venueCount,
+          privateLocationCount,
+          days,
+          daysHasMore,
+          places,
+          placesHasMore,
+          recentMeals,
+        ]
+      properties:
+        timeZone: { type: string }
+        provisional: { type: boolean }
+        rank: { type: integer, format: int64, minimum: 1 }
+        totalHundredths: { type: integer, format: int64, minimum: 0 }
+        wholeHotDogs: { type: integer, format: int64, minimum: 0 }
+        mealCount: { type: integer, format: int64, minimum: 0 }
+        venueCount: { type: integer, format: int64, minimum: 0 }
+        privateLocationCount: { type: integer, format: int64, minimum: 0 }
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProgressDay'
+        daysHasMore: { type: boolean }
+        places:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProgressPlace'
+        placesHasMore: { type: boolean }
+        recentMeals:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProgressMeal'
+    MealItem:
+      type: object
+      additionalProperties: false
+      required: [name, wholeQuantity, unitHundredths, partialHundredths]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        wholeQuantity: { type: integer, minimum: 0, maximum: 100 }
+        unitHundredths: { type: integer, minimum: 1, maximum: 10000 }
+        partialHundredths:
+          type: integer
+          minimum: 0
+          maximum: 9999
+          description: Less than unitHundredths; each item must have a positive whole quantity or partial length
+    MealContent:
+      type: object
+      additionalProperties: false
+      required: [eatenAt, location, notes, items, photoIds]
+      properties:
+        eatenAt:
+          {
+            type: string,
+            format: date-time,
+            description: Nonfuture instant since 1970,
+            at most millisecond precision,
+          }
+        venueId: { type: string, format: uuid, nullable: true }
+        location:
+          {
+            type: string,
+            maxLength: 300,
+            description: Private free-text label,
+            required when venueId is absent; empty when venueId is selected,
+          }
+        notes: { type: string, maxLength: 2000 }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/MealItem'
+        photoIds:
+          type: array
+          maxItems: 5
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    MealSave:
+      type: object
+      additionalProperties: false
+      required: [requestId, version, content, competitionIds]
+      properties:
+        requestId:
+          {
+            type: string,
+            format: uuid,
+            description: Reuse the same key and payload when retrying an uncertain request; a changed payload requires a new key,
+          }
+        version:
+          {
+            type: integer,
+            format: int64,
+            minimum: 0,
+            description: Zero for create; current source version for update,
+          }
+        content:
+          $ref: '#/components/schemas/MealContent'
+        competitionIds:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          description: Explicit targets to submit/update atomically; unselected existing snapshots are untouched. All nonwithdrawn affected competitions must allow sharing. Active membership and eating/submission windows are checked using database time after ordered locks.
+          items: { type: string, format: uuid }
+    MealRevision:
+      type: object
+      required:
+        [
+          id,
+          version,
+          eatenAt,
+          venueId,
+          location,
+          notes,
+          items,
+          photoIds,
+          totalHundredths,
+          wholeHotDogs,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer, format: int64 }
+        eatenAt: { type: string, format: date-time }
+        venueId: { type: string, format: uuid, nullable: true }
+        location:
+          {
+            type: string,
+            description: Immutable venue name/address snapshot or explicitly submitted private location label,
+          }
+        notes: { type: string }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MealItem'
+        photoIds:
+          type: array
+          items: { type: string, format: uuid }
+        totalHundredths: { type: integer, format: int64, minimum: 1 }
+        wholeHotDogs: { type: integer, minimum: 0 }
+    MealSubmission:
+      type: object
+      required:
+        [
+          competitionId,
+          competitionName,
+          revisionId,
+          totalHundredths,
+          wholeHotDogs,
+          withdrawn,
+          scoreExcluded,
+          version,
+          acceptsChanges,
+        ]
+      properties:
+        competitionId: { type: string, format: uuid }
+        competitionName: { type: string }
+        revisionId: { type: string, format: uuid }
+        totalHundredths: { type: integer, format: int64 }
+        wholeHotDogs: { type: integer }
+        withdrawn: { type: boolean }
+        scoreExcluded: { type: boolean }
+        version: { type: integer, format: int64 }
+        acceptsChanges: { type: boolean }
+    Meal:
+      type: object
+      required: [id, version, archived, revision, submissions]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer, format: int64 }
+        archived: { type: boolean }
+        revision:
+          $ref: '#/components/schemas/MealRevision'
+        submissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/MealSubmission'
+    MealPage:
+      type: object
+      required: [items, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Meal'
+        hasMore: { type: boolean }
+    MenuInput:
+      type: object
+      additionalProperties: false
+      required: [name, description]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 1000 }
+    DirectoryInput:
+      type: object
+      additionalProperties: false
+      required: [name, address, description, latitude, longitude, menuItems]
+      properties:
+        venueId: { type: string, format: uuid, nullable: true }
+        baseRevision: { type: string, format: uuid, nullable: true }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        address: { type: string, minLength: 1, maxLength: 300 }
+        description: { type: string, maxLength: 2000 }
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        menuItems:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/MenuInput'
+    DirectoryPhoto:
+      type: object
+      required: [id, menuItemId]
+      properties:
+        id: { type: string, format: uuid }
+        menuItemId: { type: string, format: uuid, nullable: true }
+    Venue:
+      type: object
+      required:
+        [
+          id,
+          revision,
+          name,
+          address,
+          description,
+          latitude,
+          longitude,
+          menuItems,
+          photos,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        revision: { type: string, format: uuid }
+        name: { type: string }
+        address: { type: string }
+        description: { type: string }
+        latitude: { type: number }
+        longitude: { type: number }
+        menuItems:
+          type: array
+          items:
+            type: object
+            required: [id, name, description]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string }
+              description: { type: string }
+        photos:
+          type: array
+          items:
+            $ref: '#/components/schemas/DirectoryPhoto'
+    VenuePage:
+      type: object
+      required: [items, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Venue'
+        hasMore: { type: boolean }
+    Contribution:
+      type: object
+      required: [id, status, reviewReason, own, venue]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [DRAFT, PENDING, APPROVED, REJECTED] }
+        reviewReason: { type: string }
+        own: { type: boolean }
+        venue:
+          $ref: '#/components/schemas/Venue'
+    ContributionPage:
+      type: object
+      required: [items, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Contribution'
+        hasMore: { type: boolean }
+    CompetitionSettings:
+      type: object
+      additionalProperties: false
+      required:
+        [name, rules, visibility, timeZone, startsAt, endsAt, allowSharedMeals]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        rules:
+          type: string
+          maxLength: 5000
+        visibility:
+          type: string
+          enum: [PUBLIC, PRIVATE]
+        timeZone:
+          type: string
+          maxLength: 80
+          description: IANA time-zone ID; numeric UTC offsets alone are not accepted
+        startsAt:
+          type: string
+          format: date-time
+          description: ISO 8601 instant, at most millisecond precision; future for creation or settings edits
+        endsAt:
+          type: string
+          format: date-time
+          description: ISO 8601 instant after the start, at most millisecond precision
+        allowSharedMeals:
+          type: boolean
+    Competition:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          id,
+          name,
+          rules,
+          visibility,
+          timeZone,
+          startsAt,
+          endsAt,
+          allowSharedMeals,
+          submissionClosesAt,
+          published,
+          version,
+          phase,
+          viewerRole,
+          memberCount,
+        ]
+      properties:
+        name:
+          $ref: '#/components/schemas/CompetitionSettings/properties/name'
+        rules:
+          $ref: '#/components/schemas/CompetitionSettings/properties/rules'
+        visibility:
+          $ref: '#/components/schemas/CompetitionSettings/properties/visibility'
+        timeZone:
+          $ref: '#/components/schemas/CompetitionSettings/properties/timeZone'
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        allowSharedMeals:
+          type: boolean
+        id:
+          type: string
+          format: uuid
+        submissionClosesAt:
+          type: string
+          format: date-time
+        published:
+          type: boolean
+        version:
+          type: integer
+          format: int64
+        phase:
+          type: string
+          enum: [DRAFT, SCHEDULED, ACTIVE, GRACE, CLOSED, FINALIZED, REVISED]
+        viewerRole:
+          type: string
+          enum: [NONE, MEMBER, ORGANIZER]
+        memberCount:
+          type: integer
+    CompetitionMember:
+      type: object
+      required: [id, displayName, role, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+        role:
+          type: string
+          enum: [MEMBER, ORGANIZER]
+        status:
+          type: string
+          enum: [ACTIVE, EXCLUDED]
+    CompetitionInvitation:
+      type: object
+      required: [id, createdAt, expiresAt, revokedAt, active]
+      properties:
+        id:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+        active:
+          type: boolean
+    InvitationPreview:
+      type: object
+      required:
+        [
+          competitionId,
+          name,
+          rules,
+          timeZone,
+          startsAt,
+          endsAt,
+          allowSharedMeals,
+          expiresAt,
+        ]
+      properties:
+        competitionId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        rules:
+          type: string
+        timeZone:
+          type: string
+        startsAt:
+          type: string
+          format: date-time
+        endsAt:
+          type: string
+          format: date-time
+        allowSharedMeals:
+          type: boolean
+        expiresAt:
+          type: string
+          format: date-time
     AuthError:
       type: object
       required: [error]

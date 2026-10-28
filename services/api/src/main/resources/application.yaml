@@ -20,6 +20,11 @@ spring:
   jackson:
     deserialization:
       fail-on-unknown-properties: true
+      accept-float-as-int: false
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
   mail:
     host: ${SMTP_HOST:localhost}
     port: ${SMTP_PORT:1025}
@@ -28,10 +33,14 @@ spring:
     properties:
       mail.smtp.auth: ${SMTP_AUTH:false}
       mail.smtp.starttls.enable: ${SMTP_STARTTLS:false}
+      mail.smtp.starttls.required: ${SMTP_STARTTLS:false}
       mail.smtp.connectiontimeout: 5000
       mail.smtp.timeout: 5000
       mail.smtp.writetimeout: 5000
 app:
+  media:
+    directory: ${MEDIA_DIRECTORY:./var/media}
+    max-bytes: ${MEDIA_MAX_BYTES:536870912}
   auth:
     public-base-url: ${PUBLIC_BASE_URL:http://127.0.0.1:3000}
     email-enabled: ${EMAIL_ENABLED:false}

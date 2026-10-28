@@ -26,6 +26,14 @@ export function createApp({ apiOrigin, webRoot }: GatewayOptions) {
 
   const app = express()
   app.disable('x-powered-by')
+  app.use((_request, response, next) => {
+    response.set({
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+    })
+    next()
+  })
 
   app.get('/healthz', (_request, response) => {
     response.json({ status: 'UP' })

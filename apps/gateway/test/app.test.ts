@@ -108,4 +108,18 @@ describe('gateway boundaries', () => {
     expect(response.status).toBe(502)
     expect(response.body).toEqual({ error: 'API_UNAVAILABLE' })
   })
+
+  it('protects document navigation and failure responses from referrer, framing, and MIME sniffing leaks', async () => {
+    const app = createApp({ apiOrigin: 'http://127.0.0.1:1', webRoot })
+    for (const path of [
+      '/sign-in/confirm?token=synthetic-link',
+      '/api/v1/status',
+      '/.env',
+    ]) {
+      const response = await request(app).get(path).accept('html')
+      expect(response.headers['referrer-policy']).toBe('no-referrer')
+      expect(response.headers['x-frame-options']).toBe('DENY')
+      expect(response.headers['x-content-type-options']).toBe('nosniff')
+    }
+  })
 })
