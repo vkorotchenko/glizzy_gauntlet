@@ -4,6 +4,42 @@
  */
 
 export interface paths {
+    "/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Signed-in active members only. Recent nonwithdrawn competitor submission snapshots across joined published competitions, newest eating time first. Own meals, unsubmitted source changes, and unjoined competitions are never included. */
+        get: operations["getCompetitorFeed"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/feed/{id}/reaction": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Idempotently set the current member's glizzy reaction on another participant's nonwithdrawn entry. Access is rechecked under the competition lock. Reactions are scoped to this submission and never affect scoring. */
+        put: operations["setMealReaction"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/meals": {
         parameters: {
             query?: never;
@@ -929,6 +965,34 @@ export interface components {
             placesHasMore: boolean;
             recentMeals: components["schemas"]["ProgressMeal"][];
         };
+        MealReaction: {
+            /** Format: int64 */
+            reactionCount: number;
+            reacted: boolean;
+        };
+        FeedItem: {
+            /**
+             * Format: uuid
+             * @description Competition entry ID
+             */
+            id: string;
+            /** Format: uuid */
+            competitionId: string;
+            competitionName: string;
+            displayName: string;
+            revision: components["schemas"]["MealRevision"];
+            scoreExcluded: boolean;
+            /** Format: int64 */
+            totalHundredths: number;
+            wholeHotDogs: number;
+            /** Format: int64 */
+            reactionCount: number;
+            reacted: boolean;
+        };
+        FeedPage: {
+            items: components["schemas"]["FeedItem"][];
+            hasMore: boolean;
+        };
         MealItem: {
             name: string;
             wholeQuantity: number;
@@ -1256,6 +1320,60 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getCompetitorFeed: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Up to 20 competition-scoped meal cards; never publicly cacheable */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedPage"];
+                };
+            };
+            default: components["responses"]["MealError"];
+        };
+    };
+    setMealReaction: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    reacted: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Current reaction count and the caller's reaction state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MealReaction"];
+                };
+            };
+            default: components["responses"]["MealError"];
+        };
+    };
     listMyMeals: {
         parameters: {
             query?: {

@@ -49,8 +49,15 @@ async function headers(page: Page) {
 }
 async function fillMeal(page: Page, eatenAt = new Date(Date.now() - 3600000)) {
   await page.goto('/meals/new')
-  await page.getByLabel('Eating time zone').fill('UTC')
-  await page.getByLabel('When you ate').fill(eatenAt.toISOString().slice(0, 16))
+  const local = await page.evaluate((instant) => {
+    const date = new Date(instant)
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 16)
+  }, eatenAt.toISOString())
+  await expect(page.getByLabel('Eating time zone')).toHaveCount(0)
+  await expect(page.getByLabel('Repeated hour')).toHaveCount(0)
+  await page.getByLabel('When you ate').fill(local)
   await page.getByLabel('Item 1 name').fill('Measured house dog')
   await page.getByLabel('Item 1 whole quantity').fill('2')
   await page.getByLabel('Item 1 full length (inches)').fill('8')
@@ -99,6 +106,8 @@ test('records exact inches privately, rejects extra precision, and archives with
   await page.getByLabel('Item 1 full length (inches)').fill('8')
   const image = await photo(page)
   const meal = await save(page)
+  expect(new Date(meal.revision.eatenAt).getUTCMinutes() % 15).toBe(0)
+  expect(new Date(meal.revision.eatenAt).getUTCSeconds()).toBe(0)
   expect(meal.revision.totalHundredths).toBe(1900)
   expect(meal.revision.wholeHotDogs).toBe(2)
   expect(meal.submissions).toEqual([])
@@ -241,7 +250,29 @@ test('shares explicit snapshots, preserves a closed competition, and revokes pho
     expect(
       (await member.request.get(`/api/v1/competitions/${b.id}/meals`)).status(),
     ).toBe(404)
+    await member.goto('/')
+    const feed = member.getByRole('article')
+    await expect(feed).toHaveCount(1)
+    await expect(
+      feed.getByRole('link', { name: a.name, exact: true }),
+    ).toBeVisible()
+    await expect(feed.getByText('19.00 inches')).toBeVisible()
+    await expect(feed.getByRole('img', { name: 'Meal photo 1' })).toBeVisible()
+    await feed.getByRole('button', { name: 'Send a glizzy' }).click()
+    await expect(
+      feed.getByRole('button', { name: 'Glizzy sent' }),
+    ).toHaveAttribute('aria-pressed', 'true')
+    await expect(feed.getByText('1 glizzy')).toBeVisible()
     await member.reload()
+    await expect(feed.getByText('1 glizzy')).toBeVisible()
+    await feed.getByRole('button', { name: 'Glizzy sent' }).click()
+    await expect(feed.getByText('0 glizzies')).toBeVisible()
+    expect(
+      await member.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true)
+    await member.goto(`/competitions/${a.id}`)
     const activity = member
       .getByRole('heading', { name: 'Member meal activity' })
       .locator('..')
@@ -299,6 +330,9 @@ test('shares explicit snapshots, preserves a closed competition, and revokes pho
       .toBe(404)
     await member.reload()
     await expect(member.getByText('No submitted meals yet.')).toBeVisible()
+    await member.goto('/')
+    await expect(member.getByText('Your crew is quiet for now.')).toBeVisible()
+    await expect(member.getByRole('article')).toHaveCount(0)
     await page
       .getByRole('button', { name: 'Archive source (keep submissions)' })
       .click()

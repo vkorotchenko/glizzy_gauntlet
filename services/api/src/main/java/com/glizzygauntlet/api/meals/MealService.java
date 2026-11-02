@@ -18,6 +18,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -109,6 +110,22 @@ public class MealService {
       int wholeHotDogs) {}
 
   public record EntryPage(List<Entry> items, boolean hasMore) {}
+
+  public record FeedItem(
+      UUID id,
+      UUID competitionId,
+      String competitionName,
+      String displayName,
+      Revision revision,
+      boolean scoreExcluded,
+      long totalHundredths,
+      int wholeHotDogs,
+      long reactionCount,
+      boolean reacted) {}
+
+  public record FeedPage(List<FeedItem> items, boolean hasMore) {}
+
+  public record Reaction(long reactionCount, boolean reacted) {}
 
   private record Row(UUID id, UUID owner, long version, boolean archived, UUID revision) {}
 
@@ -318,6 +335,81 @@ public class MealService {
             competition,
             page * 20);
     return new EntryPage(rows.stream().limit(20).toList(), rows.size() > 20);
+  }
+
+  @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+  public FeedPage feed(UUID user, int page) {
+    requireUser(user);
+    validatePage(page);
+    var rows =
+        database.query(
+            """
+        SELECT e.id, e.competition_id, c.name AS competition_name, u.display_name, e.revision_id,
+          e.score_excluded,
+          COALESCE(e.adjusted_total_hundredths, r.total_hundredths) AS score_total,
+          COALESCE(e.adjusted_whole_hot_dogs, r.whole_hot_dogs) AS score_whole,
+          (SELECT count(*) FROM meal_reactions likes WHERE likes.entry_id = e.id) AS reaction_count,
+          EXISTS (SELECT 1 FROM meal_reactions likes WHERE likes.entry_id = e.id AND likes.user_id = ?) AS reacted
+        FROM competition_entries e
+        JOIN competitions c ON c.id = e.competition_id
+        JOIN competition_memberships viewer ON viewer.competition_id = c.id AND viewer.user_id = ?
+        JOIN meals m ON m.id = e.meal_id
+        JOIN app_users u ON u.id = m.owner_id
+        JOIN meal_revisions r ON r.id = e.revision_id
+        WHERE viewer.status = 'ACTIVE' AND c.published_at IS NOT NULL AND NOT e.withdrawn
+          AND m.owner_id <> ?
+        ORDER BY r.eaten_at DESC, e.created_at DESC, e.id LIMIT 21 OFFSET ?
+        """,
+            (rs, i) ->
+                new FeedItem(
+                    rs.getObject("id", UUID.class),
+                    rs.getObject("competition_id", UUID.class),
+                    rs.getString("competition_name"),
+                    rs.getString("display_name"),
+                    revision(rs.getObject("revision_id", UUID.class)),
+                    rs.getBoolean("score_excluded"),
+                    rs.getLong("score_total"),
+                    rs.getInt("score_whole"),
+                    rs.getLong("reaction_count"),
+                    rs.getBoolean("reacted")),
+            user,
+            user,
+            user,
+            page * 20);
+    return new FeedPage(rows.stream().limit(20).toList(), rows.size() > 20);
+  }
+
+  @Transactional
+  public Reaction setReaction(UUID entry, UUID user, boolean reacted) {
+    requireUser(user);
+    var targets =
+        database.queryForList(
+            "SELECT competition_id FROM competition_entries WHERE id = ?", UUID.class, entry);
+    if (targets.isEmpty()) throw new MealException(HttpStatus.NOT_FOUND, "NOT_FOUND", null);
+    lockCompetitions(Set.of(targets.getFirst()));
+    // Recheck access after the same lock used by exclusions and withdrawals.
+    if (count(
+            """
+        SELECT count(*) FROM competition_entries e
+        JOIN competitions c ON c.id = e.competition_id
+        JOIN competition_memberships viewer ON viewer.competition_id = c.id AND viewer.user_id = ?
+        JOIN meals m ON m.id = e.meal_id
+        WHERE e.id = ? AND viewer.status = 'ACTIVE' AND c.published_at IS NOT NULL
+          AND NOT e.withdrawn AND m.owner_id <> ?
+        """,
+            user,
+            entry,
+            user)
+        == 0) throw new MealException(HttpStatus.NOT_FOUND, "NOT_FOUND", null);
+    if (reacted)
+      database.update(
+          "INSERT INTO meal_reactions (entry_id, user_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+          entry,
+          user);
+    else
+      database.update("DELETE FROM meal_reactions WHERE entry_id = ? AND user_id = ?", entry, user);
+    return new Reaction(
+        count("SELECT count(*) FROM meal_reactions WHERE entry_id = ?", entry), reacted);
   }
 
   @Transactional

@@ -5,6 +5,48 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /feed:
+    get:
+      operationId: getCompetitorFeed
+      description: Signed-in active members only. Recent nonwithdrawn competitor submission snapshots across joined published competitions, newest eating time first. Own meals, unsubmitted source changes, and unjoined competitions are never included.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          description: Up to 20 competition-scoped meal cards; never publicly cacheable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeedPage'
+        default:
+          $ref: '#/components/responses/MealError'
+  /feed/{id}/reaction:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    put:
+      operationId: setMealReaction
+      description: Idempotently set the current member's glizzy reaction on another participant's nonwithdrawn entry. Access is rechecked under the competition lock. Reactions are scoped to this submission and never affect scoring.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reacted]
+              properties:
+                reacted: { type: boolean }
+      responses:
+        '200':
+          description: Current reaction count and the caller's reaction state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MealReaction'
+        default:
+          $ref: '#/components/responses/MealError'
   /meals:
     get:
       operationId: listMyMeals
@@ -1365,6 +1407,54 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ProgressMeal'
+    MealReaction:
+      type: object
+      required: [reactionCount, reacted]
+      properties:
+        reactionCount: { type: integer, format: int64, minimum: 0 }
+        reacted: { type: boolean }
+    FeedItem:
+      type: object
+      required:
+        [
+          id,
+          competitionId,
+          competitionName,
+          displayName,
+          revision,
+          scoreExcluded,
+          totalHundredths,
+          wholeHotDogs,
+          reactionCount,
+          reacted,
+        ]
+      properties:
+        id:
+          {
+            type: string,
+            format: uuid,
+            description: Competition entry ID,
+            not the private source meal ID,
+          }
+        competitionId: { type: string, format: uuid }
+        competitionName: { type: string }
+        displayName: { type: string }
+        revision:
+          $ref: '#/components/schemas/MealRevision'
+        scoreExcluded: { type: boolean }
+        totalHundredths: { type: integer, format: int64, minimum: 0 }
+        wholeHotDogs: { type: integer, minimum: 0 }
+        reactionCount: { type: integer, format: int64, minimum: 0 }
+        reacted: { type: boolean }
+    FeedPage:
+      type: object
+      required: [items, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedItem'
+        hasMore: { type: boolean }
     MealItem:
       type: object
       additionalProperties: false

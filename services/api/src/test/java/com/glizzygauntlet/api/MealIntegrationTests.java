@@ -424,6 +424,155 @@ class MealIntegrationTests {
     rejected("PHOTO_IN_USE", () -> meals.discardPhoto(photo, author));
   }
 
+  @Test
+  void feedsOnlyCompetitorSnapshotsFromJoinedCompetitionsAndRevokesAccess() {
+    var a = active(true);
+    var b = active(true);
+    var other = active(true);
+    competitions.exclude(other.id(), author, member, "Not in this crew");
+    var submitted = meals.save(null, author, save(0, content(), List.of(a.id(), b.id())));
+    UUID snapshot = submitted.revision().id();
+    var edited =
+        meals.save(
+            submitted.id(),
+            author,
+            save(
+                submitted.version(),
+                content(List.of(new Item("Private edit", 1, 900, 0))),
+                List.of()));
+    meals.archive(edited.id(), author, new Change(UUID.randomUUID(), edited.version()));
+    meals.save(null, author, save(0, content(), List.of()));
+    meals.save(null, author, save(0, content(), List.of(other.id())));
+    meals.save(null, member, save(0, content(), List.of(a.id())));
+    competitions.create(member, settings(true));
+
+    var feed = meals.feed(member, 0);
+    assertThat(feed.items())
+        .extracting(FeedItem::competitionId)
+        .containsExactlyInAnyOrder(a.id(), b.id());
+    assertThat(feed.items())
+        .allSatisfy(
+            item -> {
+              assertThat(item.revision().id()).isEqualTo(snapshot);
+              assertThat(item.revision().totalHundredths()).isEqualTo(1900);
+              assertThat(item.reacted()).isFalse();
+              assertThat(item.reactionCount()).isZero();
+            });
+    assertThat(meals.feed(stranger, 0).items()).isEmpty();
+    competitions.exclude(a.id(), author, member, "Membership ended");
+    assertThat(meals.feed(member, 0).items())
+        .extracting(FeedItem::competitionId)
+        .containsExactly(b.id());
+    meals.withdraw(submitted.id(), b.id(), author, new Change(UUID.randomUUID(), 1L));
+    assertThat(meals.feed(member, 0).items()).isEmpty();
+  }
+
+  @Test
+  void pagesTheFeedByEatingTimeAndRejectsUnauthenticatedOrInvalidRequests() throws Exception {
+    var competition = active(true);
+    Instant latest = content().eatenAt();
+    for (int i = 0; i < 21; i++) {
+      var content =
+          new Content(
+              latest.minusSeconds(i), null, "Private place", "", content().items(), List.of());
+      meals.save(null, author, save(0, content, List.of(competition.id())));
+    }
+    var first = meals.feed(member, 0);
+    var second = meals.feed(member, 1);
+    assertThat(first.items()).hasSize(20);
+    assertThat(first.hasMore()).isTrue();
+    assertThat(first.items().getFirst().revision().eatenAt()).isEqualTo(latest);
+    assertThat(second.items()).hasSize(1);
+    assertThat(second.hasMore()).isFalse();
+    assertThat(second.items().getFirst().revision().eatenAt()).isEqualTo(latest.minusSeconds(20));
+    mvc.perform(get("/api/v1/feed")).andExpect(status().isUnauthorized());
+    for (String page : List.of("-1", "1001", "invalid"))
+      mvc.perform(get("/api/v1/feed").param("page", page).with(as(member)))
+          .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/feed").with(as(member)))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Cache-Control", "no-store"))
+        .andExpect(jsonPath("$.items.length()").value(20))
+        .andExpect(jsonPath("$.items[0].mealId").doesNotExist())
+        .andExpect(jsonPath("$.items[0].ownerId").doesNotExist())
+        .andExpect(jsonPath("$.items[0].revision.location").value("Private place"));
+  }
+
+  @Test
+  void makesGlizzyReactionsIdempotentCompetitionScopedAndIndependentOfScores() {
+    var a = active(true);
+    var b = active(true);
+    var meal = meals.save(null, author, save(0, content(), List.of(a.id(), b.id())));
+    var entry =
+        meals.feed(member, 0).items().stream()
+            .filter(item -> item.competitionId().equals(a.id()))
+            .findFirst()
+            .orElseThrow()
+            .id();
+    var one = CompletableFuture.supplyAsync(() -> meals.setReaction(entry, member, true));
+    var two = CompletableFuture.supplyAsync(() -> meals.setReaction(entry, member, true));
+    assertThat(one.join()).isEqualTo(new Reaction(1, true));
+    assertThat(two.join()).isEqualTo(new Reaction(1, true));
+    assertThat(count("meal_reactions")).isEqualTo(1);
+    assertThat(meals.feed(member, 0).items())
+        .filteredOn(item -> item.competitionId().equals(b.id()))
+        .allSatisfy(item -> assertThat(item.reactionCount()).isZero());
+    rejected("NOT_FOUND", () -> meals.setReaction(entry, stranger, true));
+    rejected("NOT_FOUND", () -> meals.setReaction(entry, author, true));
+    var invite = competitions.invite(a.id(), author);
+    competitions.joinInvitation(
+        stranger, invite.inviteUrl().substring(invite.inviteUrl().lastIndexOf('=') + 1));
+    assertThat(meals.setReaction(entry, stranger, true)).isEqualTo(new Reaction(2, true));
+    assertThat(meals.setReaction(entry, member, false)).isEqualTo(new Reaction(1, false));
+    assertThat(meals.setReaction(entry, member, false)).isEqualTo(new Reaction(1, false));
+    assertThat(meals.entries(a.id(), member, 0).items().getFirst().totalHundredths())
+        .isEqualTo(1900);
+    competitions.exclude(a.id(), author, stranger, "Membership ended");
+    rejected("NOT_FOUND", () -> meals.setReaction(entry, stranger, false));
+    meals.withdraw(meal.id(), a.id(), author, new Change(UUID.randomUUID(), 1L));
+    rejected("NOT_FOUND", () -> meals.setReaction(entry, member, true));
+    assertThat(meals.feed(member, 0).items())
+        .extracting(FeedItem::competitionId)
+        .containsExactly(b.id());
+  }
+
+  @Test
+  void requiresCsrfAndAValidDesiredStateForGlizzyReactions() throws Exception {
+    var competition = active(true);
+    meals.save(null, author, save(0, content(), List.of(competition.id())));
+    var entry = meals.feed(member, 0).items().getFirst().id();
+    String path = "/api/v1/feed/" + entry + "/reaction";
+    mvc.perform(
+            put(path).with(csrf()).contentType("application/json").content("{\"reacted\":true}"))
+        .andExpect(status().isUnauthorized());
+    mvc.perform(
+            put(path)
+                .with(as(member))
+                .contentType("application/json")
+                .content("{\"reacted\":true}"))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            put(path)
+                .with(as(member))
+                .with(csrf())
+                .contentType("application/json")
+                .content("{\"reacted\":null}"))
+        .andExpect(status().isBadRequest());
+    mvc.perform(
+            put(path)
+                .with(as(member))
+                .with(csrf())
+                .contentType("application/json")
+                .content("{\"reacted\":true}"))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Cache-Control", "no-store"))
+        .andExpect(jsonPath("$.reactionCount").value(1))
+        .andExpect(jsonPath("$.reacted").value(true));
+    mvc.perform(get("/api/v1/feed").with(as(member)))
+        .andExpect(jsonPath("$.items[0].reactionCount").value(1))
+        .andExpect(jsonPath("$.items[0].reacted").value(true));
+  }
+
   private CompetitionService.Competition active(boolean sharing) {
     var draft = competitions.create(author, settings(sharing));
     var published = competitions.publish(draft.id(), author, draft.version());

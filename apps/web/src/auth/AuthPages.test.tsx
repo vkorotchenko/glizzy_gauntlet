@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import App from '../App'
@@ -23,9 +29,108 @@ function show(path: string) {
       </MemoryRouter>
     </QueryClientProvider>,
   )
+  return cache
 }
 
 describe('account screens', () => {
+  it('updates the navigation after confirming sign-in without reloading', async () => {
+    const profile = {
+      id: 'test-user',
+      displayName: 'Diner',
+      providers: ['email'],
+      siteOwner: false,
+    }
+    let signedIn = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: Request) => {
+        if (request.method === 'GET')
+          return Response.json({
+            ...session,
+            user: signedIn ? profile : null,
+          })
+        if (request.url.endsWith('/inspect'))
+          return Response.json({
+            email: 'diner@example.test',
+            purpose: 'sign-in',
+          })
+        if (request.url.endsWith('/confirm')) {
+          signedIn = true
+          return Response.json(profile)
+        }
+        throw new Error(`Unexpected request: ${request.url}`)
+      }),
+    )
+    show(`/sign-in/confirm?token=${'A'.repeat(43)}`)
+    const navigation = within(
+      screen.getByRole('navigation', { name: 'Main navigation' }),
+    )
+    expect(
+      navigation.getByRole('link', { name: 'Sign in' }),
+    ).toBeInTheDocument()
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Confirm sign-in' }),
+    )
+
+    expect(
+      await navigation.findByRole('link', { name: 'My meals' }),
+    ).toBeInTheDocument()
+    expect(
+      navigation.getByRole('link', { name: 'My account' }),
+    ).toBeInTheDocument()
+    expect(
+      navigation.queryByRole('link', { name: 'Sign in' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('replaces personal navigation with sign-in after signing out', async () => {
+    let signedIn = true
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: Request) => {
+        if (request.method === 'GET')
+          return Response.json({
+            ...session,
+            user: signedIn
+              ? {
+                  id: 'test-user',
+                  displayName: 'Diner',
+                  providers: ['email'],
+                  siteOwner: false,
+                }
+              : null,
+          })
+        if (request.url.endsWith('/auth/logout')) {
+          signedIn = false
+          return new Response(null, { status: 204 })
+        }
+        throw new Error(`Unexpected request: ${request.url}`)
+      }),
+    )
+    const cache = show('/account')
+    cache.setQueryData(['meals'], ['private meal'])
+    const navigation = within(
+      screen.getByRole('navigation', { name: 'Main navigation' }),
+    )
+    expect(
+      await navigation.findByRole('link', { name: 'My meals' }),
+    ).toBeInTheDocument()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
+
+    expect(
+      await navigation.findByRole('link', { name: 'Sign in' }),
+    ).toBeInTheDocument()
+    expect(
+      navigation.queryByRole('link', { name: 'My meals' }),
+    ).not.toBeInTheDocument()
+    expect(
+      navigation.queryByRole('link', { name: 'My account' }),
+    ).not.toBeInTheDocument()
+    expect(cache.getQueryData(['meals'])).toBeUndefined()
+  })
+
   it('sends an email request with the session CSRF token and reports a generic outcome', async () => {
     const fetch = vi.fn(async (request: Request) => {
       if (request.method === 'GET') return Response.json(session)
