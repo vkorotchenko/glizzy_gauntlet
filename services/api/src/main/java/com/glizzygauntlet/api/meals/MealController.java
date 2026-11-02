@@ -4,6 +4,7 @@ import com.glizzygauntlet.api.auth.SessionAuthentication;
 import com.glizzygauntlet.api.competitions.CompetitionException;
 import com.glizzygauntlet.api.directory.DirectoryException;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
 import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
@@ -30,6 +31,24 @@ public class MealController {
   public record Error(String error, UUID competitionId) {}
 
   public record Photo(UUID id) {}
+
+  public record Reaction(@NotNull Boolean reacted) {}
+
+  @GetMapping("/feed")
+  public ResponseEntity<MealService.FeedPage> feed(
+      Authentication auth, @RequestParam(defaultValue = "0") int page) {
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(meals.feed(sessions.currentId(auth), page));
+  }
+
+  @PutMapping("/feed/{id}/reaction")
+  public ResponseEntity<MealService.Reaction> react(
+      @PathVariable UUID id, @Valid @RequestBody Reaction body, Authentication auth) {
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(meals.setReaction(id, sessions.currentId(auth), body.reacted()));
+  }
 
   @GetMapping("/meals")
   public MealService.MealPage list(

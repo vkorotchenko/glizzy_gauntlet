@@ -1,10 +1,10 @@
 # Glizzy Gauntlet
 
-A web-based, friendly hot-dog competition tracker. The **foundation, accounts, competitions, venue directory, meal logging, progress, and versioned recaps milestones** are implemented; the product is not ready for public deployment.
+A web-based, friendly hot-dog competition tracker. The **foundation, accounts, competitions, venue directory, meal logging, progress, versioned recaps, and competitor feed milestones** are implemented; the product is not ready for public deployment.
 
 The implementation connects React/TypeScript through a thin Node gateway to Spring Boot and PostgreSQL. It includes email magic links, optional Google OIDC, explicitly linked sign-in methods, database-backed sessions, display-name editing, public/private competitions, memberships, revocable invitations, Flyway migrations, a generated API client, and automated checks.
 
-**Before public launch:** complete host feasibility checks, real sign-in provider verification, and independently stored backups with a restore rehearsal on the chosen host. Local recovery tooling and deployment preflight are implemented; they do not certify a production environment. The home page labels its scoring illustration as an example; it does not display invented participant data.
+**Before public launch:** complete host feasibility checks, real sign-in provider verification, and independently stored backups with a restore rehearsal on the chosen host. Local recovery tooling and deployment preflight are implemented; they do not certify a production environment. The home page displays real submitted competitor meals for members, or public competition discovery and a sign-in prompt for visitors.
 
 ## Run locally
 
@@ -70,6 +70,38 @@ Discovery returns 20 competitions per page and the member directory returns 50 m
 
 The base Compose file disables both sign-in methods by default. The development override enables email through Mailpit and disables Secure cookies only for loopback HTTP. **Do not use the development override for public deployment.**
 
+### Google sign-in for local development
+
+Google sign-in uses a server-side OAuth flow. No public hostname or production email provider is needed for local use.
+
+1. Select or create a project in [Google Auth Platform](https://console.cloud.google.com/auth/overview). Complete **Branding** with the app name and required contact details. For personal Google accounts, choose an **External** audience; keep the app in **Testing** and add the accounts you will use under **Test users**.
+2. Under **Clients**, create an OAuth client with application type **Web application**. Add this exact **Authorized redirect URI**:
+
+   ```text
+   http://127.0.0.1:3000/login/oauth2/code/google
+   ```
+
+   Authorized JavaScript origins are not required for this server-side flow. The app requests only `openid` and `email`; do not add unrelated API scopes.
+
+3. Copy the client ID and secret into your existing, untracked `.env`, replacing the values below without changing your database password or other settings:
+
+   ```dotenv
+   GOOGLE_ENABLED=true
+   GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=your-client-secret
+   ```
+
+   Keep the secret out of chat, Git, screenshots, and logs. If you download Google's credentials file, store it outside the checkout.
+
+4. Run `npm run stack:up` again to recreate the API with the updated configuration. Restarting an existing container alone does not apply changed environment settings.
+5. Open **http://127.0.0.1:3000**, choose **Sign in**, and select **Continue with Google**. If you already have an email-based account, sign in with email first and link Google from **My account** instead of creating a separate profile.
+
+Use `127.0.0.1` consistently, not `localhost` or the Vite port: the OAuth callback must return to the same origin that started sign-in so its session cookie is available. If you override `GATEWAY_PORT`, register and use that port instead of `3000`; the development Compose file derives the callback origin from it.
+
+If the Google button is missing, confirm `GOOGLE_ENABLED=true` and rerun `npm run stack:up`. A `redirect_uri_mismatch` means Google's registered URI does not exactly match the callback above, including the scheme, host, port, and path. An `invalid_client` error means the web client's ID/secret must be checked privately. If Google reports an audience or test-user restriction, check **Audience** and use an allowed account.
+
+### Production providers
+
 For Google, set `GOOGLE_ENABLED=true`, `GOOGLE_CLIENT_ID`, and `GOOGLE_CLIENT_SECRET` in runtime configuration. Set `PUBLIC_BASE_URL` to your HTTPS origin and register this exact callback:
 
 ```text
@@ -122,11 +154,21 @@ Compose persists sanitized files in the API-only `media` volume, outside the gat
 
 Competition organizers can choose up to 20 approved featured venues from their competition page. Featured views follow the competition's draft/private access rules, and hidden listings automatically disappear. Featuring a venue does not grant moderation privileges or promise availability.
 
+## Home feed and glizzies
+
+Signed-in visitors see recent competitor meals across all their actively joined, published competitions, ordered by eating time with 20 cards per page. Cards show only the explicitly submitted snapshot, including its member-visible location, notes, and photos; private source edits and your own meals do not enter the feed. Archiving a source retains its submitted cards. Withdrawal or loss of membership removes access.
+
+Use **Send a glizzy** to cheer a meal, or press **Glizzy sent** to remove your reaction. Each member can send one glizzy per competition submission; retries cannot duplicate it, and reactions never affect scores. Shared meals appear separately in each competition, with independent reactions and no disclosure of other competitions. **Refresh feed** fetches current activity; there is no live push feed.
+
+Signed-out visitors see a sign-in prompt and up to two recent public competition cards, never meal details or photos.
+
 ## Meals and competition submissions
 
 Each meal contains up to 20 item lines. Record the whole quantity (0-100), measured full length (0.01-100 inches), and any additional partial portion, which must be smaller than the full length. Each line must contribute a whole hot dog or a positive partial portion. Use separate lines for different sizes. Measurements accept at most two decimal places without rounding; the API calculates scores using integer hundredths. Two 8-inch hot dogs plus 3 partial inches score **19.00 inches and 2 whole hot dogs**. No standard size or eating-speed bonus applies.
 
-Choose an approved venue or enter a private location label, eating time, optional notes, and up to five photos. Meal labels and photos never automatically enter the public directory. The source record and immutable revision history belong only to you, including when you organize a competition or hold the site-owner role.
+Choose an approved venue or enter a private location label, eating time, optional notes, and up to five photos. Meal entry uses your device's local date and time with minute precision; new or edited times round to the nearest 15 minutes, rounding down instead if rounding up would move a past meal into the future. There are no editable meal timezone or repeated-hour controls, and no profile timezone setting. Existing precise timestamps stay unchanged when you edit only other meal details. Competition eating windows and submission deadlines are still enforced.
+
+Meal labels and photos never automatically enter the public directory. The source record and immutable revision history belong only to you, including when you organize a competition or hold the site-owner role.
 
 Select target competitions explicitly on every save. You must be an active member, the eating time must fall at or after the competition's start and strictly before its end, and the submission must arrive before the 24-hour grace period ends. Future eating times are rejected. Sharing one meal across multiple nonwithdrawn submissions requires every affected competition to allow shared meals. A failed target rejects the entire save instead of creating a source or partial submissions.
 

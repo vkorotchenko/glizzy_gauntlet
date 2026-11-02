@@ -1,5 +1,6 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Temporal } from '@js-temporal/polyfill'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { loadSession } from '../auth/api'
 import { listCompetitions } from '../competitions/api'
@@ -67,10 +68,11 @@ export function MealSummary({ revision }: { revision: api.Revision }) {
         {revision.wholeHotDogs} whole hot dogs
       </p>
       <p>
-        {formatTime(
-          revision.eatenAt,
-          Intl.DateTimeFormat().resolvedOptions().timeZone,
-        )}{' '}
+        {new Intl.DateTimeFormat(undefined, {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+          hourCycle: 'h23',
+        }).format(new Date(revision.eatenAt))}{' '}
         / {revision.location}
       </p>
       <ul className="member-list">
@@ -385,20 +387,52 @@ type ItemFields = {
   length: string
   partial: string
 }
+
+function roundMealTime(local: string, zone: string, occurrence: Occurrence) {
+  try {
+    const entered = Temporal.Instant.from(
+      toInstant(local, zone, occurrence),
+    ).toZonedDateTimeISO(zone)
+    const nearest = entered.round({
+      smallestUnit: 'minute',
+      roundingIncrement: 15,
+      roundingMode: 'halfExpand',
+    })
+    const rounded =
+      nearest.epochMilliseconds > Date.now() &&
+      entered.epochMilliseconds <= Date.now()
+        ? entered.round({
+            smallestUnit: 'minute',
+            roundingIncrement: 15,
+            roundingMode: 'floor',
+          })
+        : nearest
+    return fromInstant(rounded.toInstant().toString(), zone)
+  } catch {
+    throw new Error(
+      'Choose a valid local date and time. Times skipped when clocks change are unavailable.',
+    )
+  }
+}
+
 function MealForm({ initial }: { initial?: api.Meal }) {
   const navigate = useNavigate()
   const cache = useQueryClient()
   const revision = initial?.revision
-  const [zone, setZone] = useState(
+  const [zone] = useState(
     Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
   )
-  const [initialTime] = useState(() =>
-    fromInstant(
-      revision?.eatenAt ?? new Date(Date.now() - 60000).toISOString(),
+  const [initialTime] = useState(() => {
+    const fields = fromInstant(
+      revision?.eatenAt ?? new Date(Date.now()).toISOString(),
       zone,
-    ),
-  )
-  const [time, setTime] = useState(initialTime.local)
+    )
+    return revision
+      ? fields
+      : roundMealTime(fields.local, zone, fields.occurrence)
+  })
+  const [time, setTime] = useState(initialTime.local.slice(0, 16))
+  const [timeChanged, setTimeChanged] = useState(false)
   const [occurrence, setOccurrence] = useState<Occurrence>(
     initialTime.occurrence,
   )
@@ -435,12 +469,29 @@ function MealForm({ initial }: { initial?: api.Meal }) {
   const pendingRequest = useRef<{ payload: string; requestId: string } | null>(
     null,
   )
+  const roundTime = () => {
+    if (!time || (revision && !timeChanged)) return
+    try {
+      const rounded = roundMealTime(time, zone, occurrence)
+      setTime(rounded.local.slice(0, 16))
+      setOccurrence(rounded.occurrence)
+    } catch {
+      // Saving reports invalid local times without interrupting partial edits.
+    }
+  }
   const save = useMutation({
     mutationFn: async () => {
+      let eatenAt = revision?.eatenAt ?? ''
+      if (!revision || timeChanged) {
+        const rounded = roundMealTime(time, zone, occurrence)
+        setTime(rounded.local.slice(0, 16))
+        setOccurrence(rounded.occurrence)
+        eatenAt = toInstant(rounded.local, zone, rounded.occurrence)
+      }
       const body = {
         version: initial?.version ?? 0,
         content: {
-          eatenAt: toInstant(time, zone, occurrence),
+          eatenAt,
           venueId: venueId || null,
           location: venueId ? '' : location,
           notes,
@@ -492,28 +543,20 @@ function MealForm({ initial }: { initial?: api.Meal }) {
         <input
           id="meal-time"
           type="datetime-local"
-          step="0.001"
+          step="60"
+          aria-describedby="meal-time-hint"
           required
           value={time}
-          onChange={(event) => setTime(event.target.value)}
+          onChange={(event) => {
+            setTime(event.target.value)
+            setTimeChanged(true)
+          }}
+          onBlur={roundTime}
         />
-        <label htmlFor="meal-zone">Eating time zone</label>
-        <input
-          id="meal-zone"
-          required
-          value={zone}
-          onChange={(event) => setZone(event.target.value)}
-        />
-        <label htmlFor="meal-occurrence">Repeated hour</label>
-        <select
-          id="meal-occurrence"
-          value={occurrence}
-          onChange={(event) => setOccurrence(event.target.value as Occurrence)}
-        >
-          <option value="reject">Require an unambiguous time</option>
-          <option value="earlier">First occurrence</option>
-          <option value="later">Second occurrence</option>
-        </select>
+        <p id="meal-time-hint" className="form-note">
+          Uses your device's local time, rounded to the nearest 15 minutes.
+          Rounding never moves a past meal into the future.
+        </p>
         <h2>What you ate</h2>
         <p>
           Use separate lines for different sizes. Each line allows 0-100 whole

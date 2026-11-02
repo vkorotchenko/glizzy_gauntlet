@@ -439,7 +439,72 @@ h3 {
 .header-links {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 20px;
+}
+.header-links .button {
+  margin-top: 0;
+  padding: 10px 18px;
+}
+.feed-page {
+  max-width: 780px;
+}
+.meal-feed {
+  display: grid;
+  gap: 24px;
+}
+.feed-welcome {
+  margin-bottom: 40px;
+}
+.feed-welcome .button {
+  margin-top: 8px;
+}
+.feed-card-heading,
+.feed-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.meal-feed-card .feed-card-heading h2 {
+  margin: 0 0 4px;
+  font-size: 1.3rem;
+}
+.feed-avatar {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #18583d;
+  color: #fffaf0;
+  font-weight: 750;
+}
+.feed-card-actions {
+  flex-wrap: wrap;
+  border-top: 1px solid #dfd4c2;
+  padding-top: 20px;
+  margin-top: 20px;
+}
+.glizzy-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 1px solid #a13227;
+  border-radius: 24px;
+  background: transparent;
+  color: #84261f;
+  font: inherit;
+  font-weight: 700;
+}
+.glizzy-button[aria-pressed='true'] {
+  background: #a13227;
+  color: #fffaf0;
+}
+.glizzy-button:focus-visible {
+  outline: 3px solid #18583d;
+  outline-offset: 3px;
 }
 .competition-page {
   margin: 40px auto 64px;

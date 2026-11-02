@@ -1,13 +1,23 @@
 import { expect, test } from '@playwright/test'
 
-test('connects the browser to the real API and database', async ({ page }) => {
+test('shows public competition discovery and a private-feed sign-in prompt', async ({
+  page,
+  request,
+}) => {
   await page.goto('/')
   await expect(
-    page.getByRole('heading', { name: 'Every inch has a story.' }),
+    page.getByRole('heading', {
+      name: "Your crew's next chapter starts here.",
+    }),
   ).toBeVisible()
-  await expect(page.getByText('API and database connected')).toBeVisible()
-  await page.getByRole('link', { name: 'See the game plan' }).click()
-  await expect(page).toHaveURL(/#how-it-works$/)
+  await expect(
+    page.getByRole('heading', { name: 'Explore public competitions' }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole('link', { name: 'Sign in to see your feed' }),
+  ).toHaveAttribute('href', '/sign-in')
+  expect((await request.get('/api/v1/status')).ok()).toBe(true)
+  expect((await request.get('/api/v1/feed')).status()).toBe(401)
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -15,17 +25,21 @@ test('connects the browser to the real API and database', async ({ page }) => {
   ).toBe(true)
 })
 
-test('shows an honest error and supports retrying a failed API connection', async ({
+test('keeps sign-in available and retries public competition loading', async ({
   page,
 }) => {
-  await page.route('**/api/v1/status', (route) =>
-    route.fulfill({ status: 503, json: { status: 'DOWN' } }),
+  const endpoint = /\/api\/v1\/competitions\?/
+  await page.route(endpoint, (route) =>
+    route.fulfill({ status: 503, json: { error: 'API_UNAVAILABLE' } }),
   )
   await page.goto('/')
-  await expect(page.getByText('API unavailable')).toBeVisible()
-  await page.unroute('**/api/v1/status')
-  await page.getByRole('button', { name: 'Check again' }).click()
-  await expect(page.getByText('API and database connected')).toBeVisible()
+  await expect(page.getByRole('alert')).toBeVisible()
+  await expect(
+    page.getByRole('link', { name: 'Sign in to see your feed' }),
+  ).toBeVisible()
+  await page.unroute(endpoint)
+  await page.getByRole('button', { name: 'Try competitions again' }).click()
+  await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
 test('handles client routes without exposing management endpoints', async ({

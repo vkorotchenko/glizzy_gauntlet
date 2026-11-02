@@ -1,5 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from '@tanstack/react-query'
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import {
   confirmLink,
@@ -17,6 +22,15 @@ function useSession() {
     queryFn: ({ signal }) => loadSession(signal),
     retry: false,
   })
+}
+
+function resetAccountCache(cache: QueryClient) {
+  // Keep session observers subscribed while clearing the previous account's data.
+  cache.removeQueries({
+    predicate: ({ queryKey }) => queryKey[0] !== 'session',
+  })
+  cache.getMutationCache().clear()
+  void cache.resetQueries({ queryKey: ['session'], exact: true })
 }
 
 function ErrorMessage({ error }: { error: Error | null }) {
@@ -147,7 +161,7 @@ export function ConfirmLinkPage() {
   const confirm = useMutation({
     mutationFn: () => confirmLink(token),
     onSuccess: () => {
-      cache.clear()
+      resetAccountCache(cache)
       navigate('/account', { replace: true })
     },
   })
@@ -234,7 +248,7 @@ export function AccountPage() {
   const signOut = useMutation({
     mutationFn: logout,
     onSuccess: () => {
-      cache.clear()
+      resetAccountCache(cache)
       navigate('/sign-in', { replace: true })
     },
   })

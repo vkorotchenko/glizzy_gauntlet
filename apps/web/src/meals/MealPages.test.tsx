@@ -81,7 +81,120 @@ function reply(request: Request) {
   return Response.json(meal)
 }
 
+function useLocalZone(timeZone: string) {
+  const options = new Intl.DateTimeFormat().resolvedOptions()
+  vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({
+    ...options,
+    timeZone,
+  })
+}
+
 describe('meal screens', () => {
+  it.each([
+    ['UTC', '2026-10-28T12:07', '2026-10-28T12:00:00Z'],
+    ['UTC', '2026-10-28T12:08', '2026-10-28T12:15:00Z'],
+    ['UTC', '2026-10-28T12:53', '2026-10-28T13:00:00Z'],
+    ['UTC', '2026-10-27T23:53', '2026-10-28T00:00:00Z'],
+    ['America/New_York', '2026-03-08T01:53', '2026-03-08T07:00:00Z'],
+  ])(
+    'rounds %s local time %s to a quarter-hour meal timestamp',
+    async (zone, local, expected) => {
+      useLocalZone(zone)
+      let body: Save | undefined
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (request: Request) => {
+          if (request.method === 'PUT') {
+            body = (await request.json()) as Save
+            return Response.json(meal)
+          }
+          return reply(request)
+        }),
+      )
+      show(`/meals/${meal.id}/edit`)
+      const input = await screen.findByLabelText('When you ate')
+      expect(input).toHaveAttribute('step', '60')
+      expect(
+        screen.queryByLabelText('Eating time zone'),
+      ).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Repeated hour')).not.toBeInTheDocument()
+      fireEvent.change(input, { target: { value: local } })
+      fireEvent.blur(input)
+      expect((input as HTMLInputElement).value).toMatch(/T\d{2}:(00|15|30|45)$/)
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'Save meal and selected submissions',
+        }),
+      )
+      await waitFor(() => expect(body?.content.eatenAt).toBe(expected))
+    },
+  )
+
+  it('does not round a current meal into the future, including on direct submission', async () => {
+    useLocalZone('UTC')
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-28T12:10:00Z'))
+    let body: Save | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: Request) => {
+        if (request.method === 'PUT') {
+          body = (await request.json()) as Save
+          return Response.json(meal)
+        }
+        return reply(request)
+      }),
+    )
+    show(`/meals/${meal.id}/edit`)
+    fireEvent.change(await screen.findByLabelText('When you ate'), {
+      target: { value: '2026-10-28T12:09' },
+    })
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Save meal and selected submissions',
+      }),
+    )
+    await waitFor(() =>
+      expect(body?.content.eatenAt).toBe('2026-10-28T12:00:00Z'),
+    )
+  })
+
+  it('preserves a stored precise second-occurrence timestamp when only notes change', async () => {
+    useLocalZone('America/New_York')
+    const precise = {
+      ...meal,
+      revision: { ...meal.revision, eatenAt: '2026-11-01T06:07:43.123Z' },
+    }
+    let body: Save | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: Request) => {
+        if (request.method === 'PUT') {
+          body = (await request.json()) as Save
+          return Response.json(precise)
+        }
+        if (request.url.endsWith(`/meals/${meal.id}`))
+          return Response.json(precise)
+        return reply(request)
+      }),
+    )
+    show(`/meals/${meal.id}/edit`)
+    const time = await screen.findByLabelText('When you ate')
+    expect(time).toHaveValue('2026-11-01T01:07')
+    fireEvent.blur(time)
+    fireEvent.change(screen.getByLabelText('Notes'), {
+      target: { value: 'Updated notes' },
+    })
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Save meal and selected submissions',
+      }),
+    )
+    await waitFor(() =>
+      expect(body?.content.eatenAt).toBe(precise.revision.eatenAt),
+    )
+    expect(body?.content.notes).toBe('Updated notes')
+  })
+
   it('requires explicit target selection and retries the same payload with one idempotency key', async () => {
     const saved: Save[] = []
     vi.stubGlobal(
@@ -101,6 +214,8 @@ describe('meal screens', () => {
       }),
     )
     show('/meals/new')
+    const time = await screen.findByLabelText('When you ate')
+    expect((time as HTMLInputElement).value).toMatch(/T\d{2}:(00|15|30|45)$/)
     fireEvent.change(await screen.findByLabelText('Item 1 name'), {
       target: { value: 'House dog' },
     })
@@ -149,17 +264,16 @@ describe('meal screens', () => {
     expect(screen.getByText('19.00 inches')).toBeVisible()
   })
 
-  it('rejects excessive decimal precision before sending a scoring request and tolerates a partially typed time zone', async () => {
+  it('rejects excessive decimal precision before sending a scoring request', async () => {
     const fetch = vi.fn(async (request: Request) => reply(request))
     vi.stubGlobal('fetch', fetch)
     show(`/meals/${meal.id}/edit`)
-    const zone = await screen.findByLabelText('Eating time zone')
-    fireEvent.change(zone, { target: { value: 'America/' } })
-    expect(screen.getByLabelText('Item 1 full length (inches)')).toBeVisible()
-    fireEvent.change(zone, { target: { value: 'UTC' } })
-    fireEvent.change(screen.getByLabelText('Item 1 full length (inches)'), {
-      target: { value: '8.001' },
-    })
+    fireEvent.change(
+      await screen.findByLabelText('Item 1 full length (inches)'),
+      {
+        target: { value: '8.001' },
+      },
+    )
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Save meal and selected submissions',
