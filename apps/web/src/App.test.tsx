@@ -20,6 +20,7 @@ const signedInSession = {
     displayName: 'Diner',
     providers: ['email'],
     siteOwner: false,
+    roles: [],
   },
 } satisfies Awaited<ReturnType<typeof auth.loadSession>>
 const meal: FeedItem = {
@@ -71,6 +72,28 @@ function renderApp(path = '/') {
 }
 
 describe('main navigation', () => {
+  it('marks Feed on the landing page and the current section after navigation', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ items: [], hasMore: false })),
+    )
+    renderApp()
+    const navigation = within(
+      screen.getByRole('navigation', { name: 'Main navigation' }),
+    )
+    const feed = navigation.getByRole('link', { name: 'Feed' })
+    expect(feed).toHaveAttribute('href', '/')
+    expect(feed).toHaveAttribute('aria-current', 'page')
+    fireEvent.click(navigation.getByRole('link', { name: 'Competitions' }))
+    expect(
+      await screen.findByRole('heading', { name: 'Competitions' }),
+    ).toBeVisible()
+    expect(
+      navigation.getByRole('link', { name: 'Competitions' }),
+    ).toHaveAttribute('aria-current', 'page')
+    expect(feed).not.toHaveAttribute('aria-current')
+  })
+
   it('shows visitors a sign-in button instead of personal links', async () => {
     renderApp('/not-a-page')
     const navigation = within(
@@ -86,10 +109,9 @@ describe('main navigation', () => {
     expect(
       navigation.queryByRole('link', { name: 'My account' }),
     ).not.toBeInTheDocument()
-    expect(navigation.getByRole('link', { name: 'Venues' })).toHaveAttribute(
-      'href',
-      '/venues',
-    )
+    expect(
+      navigation.queryByRole('link', { name: 'Venues' }),
+    ).not.toBeInTheDocument()
     expect(
       navigation.getByRole('link', { name: 'Competitions' }),
     ).toHaveAttribute('href', '/competitions')
@@ -103,11 +125,15 @@ describe('main navigation', () => {
     )
 
     expect(
-      await navigation.findByRole('link', { name: 'My meals' }),
-    ).toHaveAttribute('href', '/meals')
-    expect(
-      navigation.getByRole('link', { name: 'My account' }),
+      await navigation.findByRole('link', { name: 'My account' }),
     ).toHaveAttribute('href', '/account')
+    expect(
+      navigation.queryByRole('link', { name: 'My meals' }),
+    ).not.toBeInTheDocument()
+    expect(navigation.getByRole('link', { name: 'Venues' })).toHaveAttribute(
+      'href',
+      '/venues',
+    )
     expect(
       navigation.queryByRole('link', { name: 'Sign in' }),
     ).not.toBeInTheDocument()
@@ -166,6 +192,12 @@ describe('home feed', () => {
     renderApp()
 
     expect(await screen.findAllByRole('article')).toHaveLength(2)
+    expect(
+      within(
+        screen.getByRole('heading', { name: 'Your feed' }).parentElement!,
+      ).getByRole('link', { name: 'Log a meal' }),
+    ).toBeVisible()
+    expect(screen.queryByText('Sample meal')).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Lunch crew' })).toHaveAttribute(
       'href',
       '/competitions/competition-one',
@@ -174,6 +206,17 @@ describe('home feed', () => {
       screen.getByRole('link', { name: 'Dinner crew' }),
     ).toBeInTheDocument()
     expect(screen.getAllByText('19.00 inches')).toHaveLength(2)
+    for (const card of screen.getAllByRole('article')) {
+      const footer = within(card).getByRole('group', {
+        name: 'Meal totals and likes',
+      })
+      expect(footer).toBe(card.lastElementChild)
+      expect(within(footer).getByText('2 hot dogs')).toBeVisible()
+      expect(within(footer).getByText('0 likes')).toBeVisible()
+      expect(
+        within(footer).getByRole('button', { name: 'Like' }),
+      ).toHaveAttribute('aria-pressed', 'false')
+    }
     expect(screen.getAllByText('A very good lunch.')).toHaveLength(2)
     expect(
       screen.getAllByRole('img', { name: 'Meal photo 1' })[0],
@@ -183,35 +226,176 @@ describe('home feed', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('sends and removes glizzies using CSRF and authoritative counts', async () => {
+  it.each([
+    { whole: 1, total: 0, label: '1 hot dog' },
+    { whole: 0, total: 450, label: '0 hot dogs' },
+  ])(
+    'keeps likes beside totals for $label meals',
+    async ({ whole, total, label }) => {
+      vi.mocked(auth.loadSession).mockResolvedValue(signedInSession)
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          Response.json({
+            items: [
+              {
+                ...meal,
+                wholeHotDogs: whole,
+                totalHundredths: total,
+                revision: {
+                  ...meal.revision,
+                  wholeHotDogs: whole,
+                  totalHundredths: total,
+                  items: [],
+                },
+              },
+            ],
+            hasMore: false,
+          }),
+        ),
+      )
+      renderApp()
+      const footer = await screen.findByRole('group', {
+        name: 'Meal totals and likes',
+      })
+      expect(within(footer).getByText(label)).toBeVisible()
+      expect(within(footer).getByText('0 likes')).toBeVisible()
+      if (total) expect(within(footer).getByText('4.50 inches')).toBeVisible()
+      else expect(within(footer).queryByText(/inches/)).not.toBeInTheDocument()
+    },
+  )
+
+  it('shows two clearly labeled hotdog examples only when the first feed page is empty', async () => {
+    vi.mocked(auth.loadSession).mockResolvedValue(signedInSession)
+    const fetch = vi.fn(async () =>
+      Response.json({ items: [], hasMore: false }),
+    )
+    vi.stubGlobal('fetch', fetch)
+    renderApp()
+    expect(
+      await screen.findAllByRole('heading', { name: 'glizzy gauntlet' }),
+    ).toHaveLength(2)
+    expect(
+      screen.getAllByRole('img', { name: /sample illustration/ }),
+    ).toHaveLength(2)
+    expect(screen.getAllByText(/Getting started \/ Sample meal/)).toHaveLength(
+      2,
+    )
+    expect(screen.getByText(/Example data, not real people/)).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: 'Like' }),
+    ).not.toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it('opens a competition preview and an account-benefits tutorial from the sample cards', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ items: [], hasMore: false })),
+    )
+    renderApp()
+    fireEvent.click(
+      await screen.findByRole('link', {
+        name: 'Start a competition',
+      }),
+    )
+    expect(
+      await screen.findByRole('table', {
+        name: 'Example competition standings',
+      }),
+    ).toBeVisible()
+    expect(
+      screen.queryByRole('heading', { name: 'From idea to leaderboard' }),
+    ).not.toBeInTheDocument()
+    const competitions = screen.getByRole('link', { name: 'View competitions' })
+    expect(competitions).toHaveAttribute('href', '/competitions')
+    fireEvent.click(competitions)
+    expect(
+      await screen.findByRole('heading', { name: 'Competitions', level: 1 }),
+    ).toBeVisible()
+    fireEvent.click(
+      within(
+        screen.getByRole('navigation', { name: 'Main navigation' }),
+      ).getByRole('link', { name: 'Feed' }),
+    )
+    fireEvent.click(
+      await screen.findByRole('link', {
+        name: 'Log in or create an account',
+      }),
+    )
+    expect(
+      await screen.findByRole('heading', { name: 'Your seat at the table' }),
+    ).toBeVisible()
+    expect(
+      screen.getByRole('link', { name: 'Sign in or create your account' }),
+    ).toHaveAttribute('href', '/sign-in')
+  })
+
+  it('links signed-in members directly from the competition preview to competitions', async () => {
+    vi.mocked(auth.loadSession).mockResolvedValue(signedInSession)
+    renderApp('/learn/competitions')
+    await within(
+      screen.getByRole('navigation', { name: 'Main navigation' }),
+    ).findByRole('link', { name: 'My account' })
+    const tutorial = within(
+      screen
+        .getByRole('heading', { name: 'Start a competition' })
+        .closest('section')!,
+    )
+    expect(
+      tutorial.getByRole('link', { name: 'View competitions' }),
+    ).toHaveAttribute('href', '/competitions')
+    expect(tutorial.getAllByRole('link')).toHaveLength(2)
+    expect(tutorial.queryByRole('list')).not.toBeInTheDocument()
+    expect(
+      tutorial.queryByRole('heading', { name: 'From idea to leaderboard' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does not replace a failed feed request with sample meals', async () => {
+    vi.mocked(auth.loadSession).mockResolvedValue(signedInSession)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({ error: 'UNAVAILABLE' }, { status: 503 }),
+      ),
+    )
+    renderApp()
+    expect(await screen.findByRole('alert')).toBeVisible()
+    expect(screen.queryByRole('article')).not.toBeInTheDocument()
+  })
+
+  it('adds and removes likes using CSRF and authoritative counts', async () => {
     vi.mocked(auth.loadSession).mockResolvedValue(signedInSession)
     const desiredStates: boolean[] = []
     vi.stubGlobal(
       'fetch',
       vi.fn(async (request: Request) => {
         if (request.method === 'GET')
-          return Response.json({ items: [meal], hasMore: false })
+          return Response.json({
+            items: [{ ...meal, reactionCount: 7 }],
+            hasMore: false,
+          })
         expect(request.url).toMatch(/\/feed\/entry-one\/reaction$/)
         expect(request.headers.get('X-CSRF-TOKEN')).toBe('test-csrf-token')
         const { reacted } = await request.json()
         desiredStates.push(reacted)
-        return Response.json({ reactionCount: reacted ? 1 : 0, reacted })
+        return Response.json({ reactionCount: reacted ? 8 : 7, reacted })
       }),
     )
     renderApp()
 
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Send a glizzy' }),
-    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Like' }))
     expect(
-      await screen.findByRole('button', { name: 'Glizzy sent' }),
+      await screen.findByRole('button', { name: 'Liked' }),
     ).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByText('1 glizzy')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Glizzy sent' }))
-    expect(
-      await screen.findByRole('button', { name: 'Send a glizzy' }),
-    ).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.getByText('0 glizzies')).toBeInTheDocument()
+    expect(screen.getByText('8 likes')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Liked' }))
+    expect(await screen.findByRole('button', { name: 'Like' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(screen.getByText('7 likes')).toBeInTheDocument()
     expect(desiredStates).toEqual([true, false])
   })
 
@@ -231,18 +415,14 @@ describe('home feed', () => {
     )
     renderApp()
 
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Send a glizzy' }),
-    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Like' }))
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Please try again',
     )
-    expect(screen.getByText('0 glizzies')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Send a glizzy' }))
-    expect(
-      await screen.findByRole('button', { name: 'Glizzy sent' }),
-    ).toBeEnabled()
-    expect(screen.getByText('1 glizzy')).toBeInTheDocument()
+    expect(screen.getByText('0 likes')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Like' }))
+    expect(await screen.findByRole('button', { name: 'Liked' })).toBeEnabled()
+    expect(screen.getByText('1 like')).toBeInTheDocument()
   })
 
   it('paginates across older meals and has an honest empty state', async () => {
@@ -289,7 +469,7 @@ describe('home feed', () => {
         'No public competitions yet. Sign in to start your own.',
       ),
     ).toBeInTheDocument()
-    expect(screen.queryByRole('article')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('article')).toHaveLength(2)
   })
 
   it('does not request meal data while the session is unavailable', async () => {
@@ -304,7 +484,7 @@ describe('home feed', () => {
     )
     expect(fetch).not.toHaveBeenCalled()
     expect(
-      screen.queryByRole('button', { name: 'Send a glizzy' }),
+      screen.queryByRole('button', { name: 'Like' }),
     ).not.toBeInTheDocument()
   })
 

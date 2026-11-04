@@ -57,7 +57,7 @@ public class RecapService {
   public record Correction(
       @NotNull UUID requestId,
       @NotNull @Positive Long version,
-      @NotNull @Min(1) @Max(20199980) Long totalHundredths,
+      @NotNull @Min(0) @Max(20199980) Long totalHundredths,
       @NotNull @Min(0) @Max(2000) Integer wholeHotDogs,
       @NotNull Boolean excluded,
       @NotBlank @Size(max = 500) String reason) {}
@@ -150,7 +150,7 @@ public class RecapService {
         database.queryForMap(
             """
         SELECT COUNT(*) AS meals, COUNT(DISTINCT r.venue_id) AS venues,
-          COUNT(DISTINCT r.location) FILTER (WHERE r.venue_id IS NULL) AS private_places,
+          COUNT(DISTINCT r.location) FILTER (WHERE r.venue_id IS NULL AND r.location <> '') AS private_places,
           COALESCE(MAX(e.total_hundredths), 0) AS largest
         FROM competition_result_entries e JOIN meal_revisions r ON r.id = e.revision_id
         WHERE e.result_id = ? AND NOT e.score_excluded
@@ -162,6 +162,7 @@ public class RecapService {
         SELECT MIN(r.location) AS location, r.venue_id, COUNT(*) AS meals, SUM(e.total_hundredths) AS total
         FROM competition_result_entries e JOIN meal_revisions r ON r.id = e.revision_id
         WHERE e.result_id = ? AND NOT e.score_excluded
+          AND (r.venue_id IS NOT NULL OR r.location <> '')
         GROUP BY r.venue_id, CASE WHEN r.venue_id IS NULL THEN r.location END
         ORDER BY meals DESC, total DESC, r.venue_id NULLS LAST, MIN(r.location) LIMIT 5
         """,
@@ -241,12 +242,15 @@ public class RecapService {
         || change.reason().isBlank()
         || change.reason().length() > 500
         || change.totalHundredths() == null
-        || change.totalHundredths() < 1
+        || change.totalHundredths() < 0
         || change.totalHundredths() > 20199980
         || change.wholeHotDogs() == null
         || change.wholeHotDogs() < 0
         || change.wholeHotDogs() > 2000
         || change.excluded() == null) throw error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST");
+    if (competition.trackingMode() == CompetitionService.TrackingMode.COUNT
+        ? change.wholeHotDogs() == 0
+        : change.totalHundredths() == 0) throw error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST");
     long previousResult = ensure(id);
     var rows =
         database.query(
@@ -414,9 +418,10 @@ public class RecapService {
       database.update(
           scores
               + """
-          SELECT ?, u.id, u.display_name, RANK() OVER (ORDER BY COALESCE(s.total, 0) DESC),
+          SELECT ?, u.id, u.display_name, RANK() OVER (ORDER BY CASE WHEN c.tracking_mode = 'COUNT' THEN COALESCE(s.whole, 0) ELSE COALESCE(s.total, 0) END DESC),
             COALESCE(s.total, 0), COALESCE(s.whole, 0)
           FROM competition_memberships m JOIN app_users u ON u.id = m.user_id
+          JOIN competitions c ON c.id = m.competition_id
           LEFT JOIN scores s ON s.owner_id = u.id
           WHERE m.competition_id = ? AND (m.status = 'ACTIVE' OR s.owner_id IS NOT NULL)
           """,
@@ -427,13 +432,15 @@ public class RecapService {
       database.update(
           scores
               + """
-          SELECT ?, p.user_id, p.display_name, RANK() OVER (ORDER BY COALESCE(s.total, 0) DESC),
+          SELECT ?, p.user_id, p.display_name, RANK() OVER (ORDER BY CASE WHEN c.tracking_mode = 'COUNT' THEN COALESCE(s.whole, 0) ELSE COALESCE(s.total, 0) END DESC),
             COALESCE(s.total, 0), COALESCE(s.whole, 0)
           FROM competition_result_participants p LEFT JOIN scores s ON s.owner_id = p.user_id
+          JOIN competitions c ON c.id = ?
           WHERE p.result_id = (SELECT id FROM competition_results WHERE competition_id = ? AND version = 1)
           """,
           result,
           result,
+          id,
           id);
     database.update("UPDATE competitions SET current_result_version = ? WHERE id = ?", version, id);
   }

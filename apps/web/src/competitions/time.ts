@@ -27,7 +27,8 @@ export function fromInstant(instant: string, zone: string) {
   }
 }
 
-export function formatTime(instant: string, zone: string) {
+export function formatTime(instant: string | null, zone: string) {
+  if (instant === null) return 'No end date'
   try {
     return new Intl.DateTimeFormat(undefined, {
       timeZone: zone,

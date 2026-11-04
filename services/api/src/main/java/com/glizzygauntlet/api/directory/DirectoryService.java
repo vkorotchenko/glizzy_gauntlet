@@ -1,5 +1,6 @@
 package com.glizzygauntlet.api.directory;
 
+import com.glizzygauntlet.api.auth.GlobalRoleService;
 import com.glizzygauntlet.api.competitions.CompetitionService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
@@ -21,15 +22,18 @@ public class DirectoryService {
   private final ImageStore images;
   private final CompetitionService competitions;
   private final long storageLimit;
+  private final GlobalRoleService roles;
 
   public DirectoryService(
       JdbcTemplate database,
       ImageStore images,
       CompetitionService competitions,
+      GlobalRoleService roles,
       @Value("${app.media.max-bytes:536870912}") long storageLimit) {
     this.database = database;
     this.images = images;
     this.competitions = competitions;
+    this.roles = roles;
     this.storageLimit = storageLimit;
   }
 
@@ -125,7 +129,8 @@ public class DirectoryService {
     validatePage(page);
     if (!List.of("mine", "pending", "all").contains(scope))
       throw error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST");
-    if (!scope.equals("mine")) requireOwner(user);
+    if (scope.equals("pending")) requireReviewer(user);
+    if (scope.equals("all")) requireAdmin(user);
     var rows =
         database.query(
             "SELECT * FROM directory_contributions WHERE "
@@ -262,7 +267,7 @@ public class DirectoryService {
 
   @Transactional
   public Contribution review(UUID id, UUID user, boolean approve, String reason) {
-    requireOwner(user);
+    requireReviewer(user);
     var row = row(id, true);
     if (!row.status().equals("PENDING")) throw error(HttpStatus.CONFLICT, "CONTRIBUTION_LOCKED");
     var current =
@@ -286,7 +291,7 @@ public class DirectoryService {
 
   @Transactional
   public void hide(UUID id, UUID user, boolean hidden, String reason) {
-    requireOwner(user);
+    requireAdmin(user);
     if (database.update(
             "UPDATE directory_venues SET hidden = ? WHERE id = ? AND current_revision IS NOT NULL",
             hidden,
@@ -303,12 +308,13 @@ public class DirectoryService {
         JOIN directory_venues v ON v.id = c.venue_id
         WHERE p.id = ? AND (
           (v.current_revision = c.id AND NOT v.hidden)
-          OR c.contributor_id = ? OR EXISTS (SELECT 1 FROM app_users u WHERE u.id = ? AND u.site_owner))
+          OR c.contributor_id = ? OR ? OR (? AND c.status <> 'DRAFT'))
         """,
             UUID.class,
             id,
             user,
-            user);
+            roles.isAdmin(user),
+            roles.canReviewVenues(user));
     if (allowed.isEmpty()) throw error(HttpStatus.NOT_FOUND, "NOT_FOUND");
     return images.read(id, thumbnail);
   }
@@ -332,7 +338,7 @@ public class DirectoryService {
   @Transactional
   public void feature(UUID id, UUID user, UUID venue, boolean add) {
     database.queryForList("SELECT id FROM competitions WHERE id = ? FOR UPDATE", id);
-    if (competitions.get(id, user).viewerRole() != CompetitionService.Role.ORGANIZER)
+    if (!competitions.get(id, user).canAdminister())
       throw error(HttpStatus.FORBIDDEN, "ORGANIZER_ONLY");
     if (add) {
       database.queryForList("SELECT id FROM directory_venues WHERE id = ? FOR SHARE", venue);
@@ -438,10 +444,14 @@ public class DirectoryService {
     if (user == null) throw error(HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED");
   }
 
-  private void requireOwner(UUID user) {
+  private void requireAdmin(UUID user) {
     requireUser(user);
-    if (count("SELECT count(*) FROM app_users WHERE id = ? AND site_owner", user) == 0)
-      throw error(HttpStatus.FORBIDDEN, "OWNER_ONLY");
+    if (!roles.isAdmin(user)) throw error(HttpStatus.FORBIDDEN, "ADMIN_ONLY");
+  }
+
+  private void requireReviewer(UUID user) {
+    requireUser(user);
+    if (!roles.canReviewVenues(user)) throw error(HttpStatus.FORBIDDEN, "VENUE_APPROVER_ONLY");
   }
 
   private void requireContributor(Row row, UUID user) {
@@ -452,7 +462,8 @@ public class DirectoryService {
   private void requireContributorOrOwner(Row row, UUID user) {
     requireUser(user);
     if (!row.contributor().equals(user)
-        && count("SELECT count(*) FROM app_users WHERE id = ? AND site_owner", user) == 0)
+        && !roles.isAdmin(user)
+        && !(roles.canReviewVenues(user) && !row.status().equals("DRAFT")))
       throw error(HttpStatus.NOT_FOUND, "NOT_FOUND");
   }
 

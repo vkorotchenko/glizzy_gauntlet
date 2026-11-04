@@ -4,6 +4,44 @@
  */
 
 export interface paths {
+    "/admin/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Admin-only paginated account directory for assigning global roles. Returns display names and account IDs, never email addresses. Role checks use current database grants, not cached session authority. */
+        get: operations["listRoleAccounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/accounts/{id}/roles/{role}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                role: components["schemas"]["GlobalRole"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Admin-only idempotent grant. Actual changes record the actor and target account in an audit event. Account IDs are authoritative; email is never a role rule. */
+        put: operations["grantGlobalRole"];
+        post?: never;
+        /** @description Admin-only idempotent, audited revocation. Cannot revoke the last Admin. Mutations serialize and recheck caller authority under the lock so revoked or concurrent requests cannot bypass this rule. */
+        delete: operations["revokeGlobalRole"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/feed": {
         parameters: {
             query?: never;
@@ -315,6 +353,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** @description Signed-in approved venue directory. The map aggregates its pages; guests cannot access venue data. */
         get: operations["listVenues"];
         put?: never;
         post?: never;
@@ -475,6 +514,7 @@ export interface paths {
             };
             cookie?: never;
         };
+        /** @description Signed-in access only; competition visibility still applies. */
         get: operations["listFeaturedVenues"];
         put?: never;
         post?: never;
@@ -573,6 +613,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/competitions/{id}/leave": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Authenticated, CSRF-protected opt-out from the all-time competition. Withdraws only this user's entries in that competition; private source meals and other competitions stay unchanged. Rejoining is explicit and does not restore old submissions automatically. Ordinary competitions do not support this action. */
+        post: operations["leaveAllTimeCompetition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/competitions/{id}/members": {
         parameters: {
             query?: never;
@@ -604,6 +663,26 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["excludeCompetitionMember"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/invitation-emails": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        /** @description Organizer-only recipient addresses and delivery status, including queued draft invitations. Responses are no-store; addresses never appear in competition metadata or member views. */
+        get: operations["listCompetitionInvitationEmails"];
+        put?: never;
+        /** @description Organizer-only background send/retry of pending or failed email invitations after publication and before eating ends. Already-sent rows are skipped. Publication queues this automatically. Poll the GET endpoint for delivery status. Pending recipients remain saved if the bounded worker queue is busy or interrupted and can be retried manually. Delivery uses the existing SMTP configuration and reusable, revocable links; SMTP acceptance is not inbox delivery. Limited to 100 attempts/hour globally, 40/organizer, 5/address, and a one-minute address cooldown. The existing 20 active-link limit applies; failed-send links are revoked. */
+        post: operations["sendCompetitionInvitationEmails"];
         delete?: never;
         options?: never;
         head?: never;
@@ -921,6 +1000,8 @@ export interface components {
             mealCount: number;
             /** Format: int64 */
             cumulativeHundredths: number;
+            /** Format: int64 */
+            cumulativeWholeHotDogs: number;
         };
         ProgressPlace: {
             /** Format: uuid */
@@ -1003,15 +1084,23 @@ export interface components {
         MealContent: {
             /**
              * Format: date-time
-             * @description Nonfuture instant since 1970
+             * @description Optional nonfuture instant since 1970 with at most millisecond precision; defaults to database time when omitted
              */
-            eatenAt: string;
+            eatenAt?: string;
             /** Format: uuid */
             venueId?: string | null;
-            /** @description Private free-text label */
-            location: string;
+            /** @description Optional private free-text label; empty or omitted when venueId is selected */
+            location?: string;
             notes: string;
+            /** @description Legacy measured item lines. For simple logging send an empty array and explicit totalHundredths and wholeHotDogs instead. Do not mix the two formats. */
             items: components["schemas"]["MealItem"][];
+            /**
+             * Format: int64
+             * @description Total measured inches in hundredths, not length per hot dog. Required with empty items; use zero for count-only logging.
+             */
+            totalHundredths?: number;
+            /** @description Required with empty items; use zero for length-only logging. At least one total must be positive. COUNT targets require a positive count; LENGTH and BOTH targets require positive inches. */
+            wholeHotDogs?: number;
             photoIds: string[];
         };
         MealSave: {
@@ -1132,6 +1221,30 @@ export interface components {
             items: components["schemas"]["Contribution"][];
             hasMore: boolean;
         };
+        CompetitionCreation: {
+            name: components["schemas"]["CompetitionSettings"]["name"];
+            rules: components["schemas"]["CompetitionSettings"]["rules"];
+            visibility: components["schemas"]["CompetitionSettings"]["visibility"];
+            timeZone: components["schemas"]["CompetitionSettings"]["timeZone"];
+            startsAt: components["schemas"]["CompetitionSettings"]["startsAt"];
+            endsAt: components["schemas"]["CompetitionSettings"]["endsAt"];
+            allowSharedMeals: components["schemas"]["CompetitionSettings"]["allowSharedMeals"];
+            trackingMode?: components["schemas"]["CompetitionSettings"]["trackingMode"];
+            /** @description Optional recipients, normalized and deduplicated case-insensitively. Stored privately until publication; no accounts or memberships are created. Requires configured email delivery. Omit or send an empty array for no emails. */
+            invitationEmails?: string[];
+        };
+        CompetitionInvitationEmail: {
+            /** Format: uuid */
+            id: string;
+            /** Format: email */
+            email: string;
+            /** @enum {string} */
+            status: "PENDING" | "SENT" | "FAILED";
+            /** @enum {string|null} */
+            lastError: "EMAIL_DISABLED" | "EMAIL_RATE_LIMIT" | "INVITATION_LIMIT" | "DELIVERY_FAILED" | null;
+            /** Format: date-time */
+            sentAt: string | null;
+        };
         CompetitionSettings: {
             name: string;
             rules: string;
@@ -1150,6 +1263,12 @@ export interface components {
              */
             endsAt: string;
             allowSharedMeals: boolean;
+            /**
+             * @description Count ranks by whole hot dogs; length and both rank by inches without a count tie-breaker. Defaults to BOTH for existing clients. Locks with all other settings when eating starts.
+             * @default BOTH
+             * @enum {string}
+             */
+            trackingMode: "COUNT" | "LENGTH" | "BOTH";
         };
         Competition: {
             name: components["schemas"]["CompetitionSettings"]["name"];
@@ -1159,19 +1278,27 @@ export interface components {
             /** Format: date-time */
             startsAt: string;
             /** Format: date-time */
-            endsAt: string;
+            endsAt: string | null;
             allowSharedMeals: boolean;
+            trackingMode: components["schemas"]["CompetitionSettings"]["trackingMode"];
             /** Format: uuid */
             id: string;
             /** Format: date-time */
-            submissionClosesAt: string;
+            submissionClosesAt: string | null;
+            /** @description Permanent count leaderboard administered by global Admins, independently of participation. Accounts join by default; leaving withdraws their shared entries and is respected on later sign-ins. No end or submission cutoff; its lifetime settings remain locked. */
+            allTime: boolean;
             published: boolean;
             /** Format: int64 */
             version: number;
             /** @enum {string} */
             phase: "DRAFT" | "SCHEDULED" | "ACTIVE" | "GRACE" | "CLOSED" | "FINALIZED" | "REVISED";
-            /** @enum {string} */
+            /**
+             * @description Active participation role. An opted-out global Admin has NONE on all-time but can still administer it.
+             * @enum {string}
+             */
             viewerRole: "NONE" | "MEMBER" | "ORGANIZER";
+            /** @description True for the active organizer of an ordinary competition or a global Admin on all-time, including opted-out Admins. Does not grant access to unjoined meal details or other accounts' private competitions. */
+            canAdminister: boolean;
             memberCount: number;
         };
         CompetitionMember: {
@@ -1181,7 +1308,7 @@ export interface components {
             /** @enum {string} */
             role: "MEMBER" | "ORGANIZER";
             /** @enum {string} */
-            status: "ACTIVE" | "EXCLUDED";
+            status: "ACTIVE" | "EXCLUDED" | "LEFT";
         };
         CompetitionInvitation: {
             /** Format: uuid */
@@ -1203,7 +1330,7 @@ export interface components {
             /** Format: date-time */
             startsAt: string;
             /** Format: date-time */
-            endsAt: string;
+            endsAt: string | null;
             allowSharedMeals: boolean;
             /** Format: date-time */
             expiresAt: string;
@@ -1211,11 +1338,28 @@ export interface components {
         AuthError: {
             error: string;
         };
+        /** @enum {string} */
+        GlobalRole: "ADMIN" | "VENUE_APPROVER";
+        RoleAccount: {
+            /** Format: uuid */
+            id: string;
+            displayName: string;
+            roles: components["schemas"]["GlobalRole"][];
+        };
+        RoleAccountPage: {
+            items: components["schemas"]["RoleAccount"][];
+            hasMore: boolean;
+        };
         Profile: {
             /** Format: uuid */
             id: string;
             displayName: string;
-            siteOwner: boolean;
+            /**
+             * @deprecated
+             * @description Compatibility alias for the Admin role. Permissions are stored only in account_roles; new clients must use roles.
+             */
+            readonly siteOwner: boolean;
+            readonly roles: components["schemas"]["GlobalRole"][];
             providers: ("google" | "email")[];
         };
         SessionInfo: {
@@ -1320,6 +1464,82 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    listRoleAccounts: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                query?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Up to 20 matching accounts, never publicly cacheable */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleAccountPage"];
+                };
+            };
+            default: components["responses"]["AuthError"];
+        };
+    };
+    grantGlobalRole: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                role: components["schemas"]["GlobalRole"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated account roles, never publicly cacheable */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleAccount"];
+                };
+            };
+            default: components["responses"]["AuthError"];
+        };
+    };
+    revokeGlobalRole: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                role: components["schemas"]["GlobalRole"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated account roles, never publicly cacheable */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleAccount"];
+                };
+            };
+            default: components["responses"]["AuthError"];
+        };
+    };
     getCompetitorFeed: {
         parameters: {
             query?: {
@@ -1660,7 +1880,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Public only for published public competitions; otherwise competition visibility applies. Twenty participants per page. Rank uses inches alone (1, 1, 3); active members with no submissions score zero. After finalization, serves the latest immutable result rankings and frozen display names. No account IDs or meal details. */
+            /** @description Public only for published public competitions; otherwise competition visibility applies. Twenty participants per page. COUNT ranks by whole hot dogs; LENGTH and BOTH rank by inches alone. Equal tracked totals share a rank (1, 1, 3); active members with no submissions score zero. After finalization, serves the latest immutable result rankings and frozen display names. No account IDs or meal details. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1877,7 +2097,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Current approved public venue revision only */
+            /** @description Signed-in access to the current approved venue revision only */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1931,7 +2151,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Own contribution history, or site-owner-only pending queue/all contribution history */
+            /** @description Own contribution history, Admin or Venue approver pending queue, or Admin-only all-contribution history */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1981,7 +2201,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Contributor or site-owner view, never public */
+            /** @description Contributor or Admin view; Venue approvers may inspect submitted/reviewed contributions, never another account's draft. Never public. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2120,7 +2340,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Reencoded image only; public only when associated with a currently visible approved venue revision; otherwise contributor/site owner only, always no-store */
+            /** @description Authentication required. Current approved images are visible to signed-in accounts. Other images require contributor or Admin access; Venue approvers may inspect submitted/reviewed images, never another account's draft. Always no-store. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2207,7 +2427,7 @@ export interface operations {
         parameters: {
             query?: {
                 page?: components["parameters"]["Page"];
-                scope?: "public" | "mine";
+                scope?: "public" | "mine" | "joined" | "administered" | "participating";
             };
             header?: never;
             path?: never;
@@ -2215,7 +2435,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Published public competitions, or the signed-in user's active memberships and drafts */
+            /** @description Public discovery includes the permanent all-time competition. Mine includes active memberships and drafts; joined excludes drafts. Administered lists the account's organized ordinary competitions and all-time for global Admins, even when opted out. Participating lists other active memberships without duplicates. All-time appears first; private scopes require sign-in. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2241,7 +2461,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CompetitionSettings"];
+                "application/json": components["schemas"]["CompetitionCreation"];
             };
         };
         responses: {
@@ -2330,6 +2550,23 @@ export interface operations {
             default: components["responses"]["CompetitionError"];
         };
     };
+    leaveAllTimeCompetition: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Competition"];
+            default: components["responses"]["CompetitionError"];
+        };
+    };
     listCompetitionMembers: {
         parameters: {
             query?: {
@@ -2384,6 +2621,54 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    listCompetitionInvitationEmails: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Queued and attempted invitations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompetitionInvitationEmail"][];
+                };
+            };
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    sendCompetitionInvitationEmails: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current per-recipient status after queuing background delivery; individual delivery failures do not undo publication */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompetitionInvitationEmail"][];
+                };
             };
             default: components["responses"]["CompetitionError"];
         };

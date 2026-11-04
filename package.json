@@ -13,6 +13,7 @@
   },
   "scripts": {
     "dev": "concurrently --kill-others-on-fail -n web,gateway \"npm run dev -w @glizzy/web\" \"npm run dev -w @glizzy/gateway\"",
+    "watch": "npm run dev -w @glizzy/web",
     "build": "npm run build --workspaces --if-present",
     "lint": "oxlint apps packages tests ops *.ts",
     "format": "prettier --write .",

@@ -3,6 +3,7 @@ package com.glizzygauntlet.api.competitions;
 import com.glizzygauntlet.api.auth.SessionAuthentication;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.CacheControl;
@@ -19,10 +20,38 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 public class CompetitionController {
   private final CompetitionService competitions;
   private final SessionAuthentication sessions;
+  private final CompetitionEmailService emails;
+  private final CompetitionEmailDelivery delivery;
 
-  public CompetitionController(CompetitionService competitions, SessionAuthentication sessions) {
+  public CompetitionController(
+      CompetitionService competitions,
+      SessionAuthentication sessions,
+      CompetitionEmailService emails,
+      CompetitionEmailDelivery delivery) {
     this.competitions = competitions;
     this.sessions = sessions;
+    this.emails = emails;
+    this.delivery = delivery;
+  }
+
+  public record Creation(
+      @NotBlank @Size(max = 120) String name,
+      @NotNull @Size(max = 5000) String rules,
+      @NotNull CompetitionService.Visibility visibility,
+      @NotBlank @Size(max = 80) String timeZone,
+      @NotNull Instant startsAt,
+      @NotNull Instant endsAt,
+      @NotNull Boolean allowSharedMeals,
+      CompetitionService.TrackingMode trackingMode,
+      @Size(max = 20) List<@NotBlank @Email @Size(max = 254) String> invitationEmails) {
+    public Creation {
+      if (invitationEmails == null) invitationEmails = List.of();
+    }
+
+    public CompetitionService.Settings settings() {
+      return new CompetitionService.Settings(
+          name, rules, visibility, timeZone, startsAt, endsAt, allowSharedMeals, trackingMode);
+    }
   }
 
   public record Update(
@@ -53,8 +82,8 @@ public class CompetitionController {
   @PostMapping("/competitions")
   @ResponseStatus(HttpStatus.CREATED)
   public CompetitionService.Competition create(
-      @Valid @RequestBody CompetitionService.Settings body, Authentication auth) {
-    return competitions.create(sessions.currentId(auth), body);
+      @Valid @RequestBody Creation body, Authentication auth) {
+    return emails.create(sessions.currentId(auth), body.settings(), body.invitationEmails());
   }
 
   @PutMapping("/competitions/{id}")
@@ -66,12 +95,41 @@ public class CompetitionController {
   @PostMapping("/competitions/{id}/publish")
   public CompetitionService.Competition publish(
       @PathVariable UUID id, @Valid @RequestBody Version body, Authentication auth) {
-    return competitions.publish(id, sessions.currentId(auth), body.version());
+    UUID user = sessions.currentId(auth);
+    var competition = competitions.publish(id, user, body.version());
+    if (List.of(CompetitionService.Phase.SCHEDULED, CompetitionService.Phase.ACTIVE)
+        .contains(competition.phase())) {
+      if (emails.prepare(id, user).stream().anyMatch(row -> !row.status().equals("SENT")))
+        delivery.queue(id, user);
+    }
+    return competition;
+  }
+
+  @GetMapping("/competitions/{id}/invitation-emails")
+  public ResponseEntity<List<CompetitionEmailService.InvitationEmail>> invitationEmails(
+      @PathVariable UUID id, Authentication auth) {
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(emails.list(id, sessions.currentId(auth)));
+  }
+
+  @PostMapping("/competitions/{id}/invitation-emails")
+  public ResponseEntity<List<CompetitionEmailService.InvitationEmail>> sendInvitationEmails(
+      @PathVariable UUID id, Authentication auth) {
+    UUID user = sessions.currentId(auth);
+    var queued = emails.prepare(id, user);
+    if (queued.stream().anyMatch(row -> !row.status().equals("SENT"))) delivery.queue(id, user);
+    return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(queued);
   }
 
   @PostMapping("/competitions/{id}/join")
   public CompetitionService.Competition join(@PathVariable UUID id, Authentication auth) {
     return competitions.join(id, sessions.currentId(auth));
+  }
+
+  @PostMapping("/competitions/{id}/leave")
+  public CompetitionService.Competition leave(@PathVariable UUID id, Authentication auth) {
+    return competitions.leave(id, sessions.currentId(auth));
   }
 
   @GetMapping("/competitions/{id}/members")

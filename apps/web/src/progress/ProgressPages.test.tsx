@@ -34,10 +34,13 @@ const competition: Competition = {
   endsAt: '2026-10-28T04:00:00Z',
   submissionClosesAt: '2026-10-29T04:00:00Z',
   allowSharedMeals: true,
+  trackingMode: 'BOTH',
+  allTime: false,
   published: true,
   version: 1,
   phase: 'GRACE',
   viewerRole: 'MEMBER',
+  canAdminister: false,
   memberCount: 3,
 }
 const progress: Progress = {
@@ -56,6 +59,7 @@ const progress: Progress = {
       wholeHotDogs: 0,
       mealCount: 0,
       cumulativeHundredths: 400,
+      cumulativeWholeHotDogs: 1,
     },
     {
       date: '2026-10-27',
@@ -63,6 +67,7 @@ const progress: Progress = {
       wholeHotDogs: 2,
       mealCount: 1,
       cumulativeHundredths: 1900,
+      cumulativeWholeHotDogs: 3,
     },
   ],
   daysHasMore: true,
@@ -111,6 +116,37 @@ function reply(request: Request) {
 }
 
 describe('standings and progress', () => {
+  it('uses hot dog counts for count-only charts and hides untracked inches', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: Request) =>
+        request.url.endsWith(`/competitions/${competition.id}`)
+          ? Response.json({ ...competition, trackingMode: 'COUNT' })
+          : reply(request),
+      ),
+    )
+    show()
+    const totals = await screen.findByLabelText('Your competition totals')
+    expect(within(totals).queryByText('Inches')).not.toBeInTheDocument()
+    expect(
+      await screen.findByRole('img', { name: /Daily hot dogs/ }),
+    ).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Cumulative chart' }))
+    expect(
+      await screen.findByRole('img', { name: /Cumulative hot dogs/ }),
+    ).toBeVisible()
+    const table = screen.getByRole('table', {
+      name: 'Exact daily and cumulative totals',
+    })
+    expect(
+      within(table).getByRole('columnheader', { name: 'Cumulative hot dogs' }),
+    ).toBeVisible()
+    expect(
+      within(table).queryByRole('columnheader', { name: 'Inches' }),
+    ).not.toBeInTheDocument()
+    expect(within(table).getByText('3')).toBeVisible()
+  })
+
   it('shows tied public ranks without requesting personal or member activity for visitors', async () => {
     const fetch = vi.fn(async (request: Request) => {
       if (request.url.endsWith('/auth/session'))

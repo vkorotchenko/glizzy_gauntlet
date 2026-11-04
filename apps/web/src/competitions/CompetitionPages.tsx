@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { loadSession } from '../auth/api'
+import { PageHeading } from '../PageHeading'
 import * as api from './api'
 import { FeaturedVenues } from '../directory/DirectoryPages'
 import { CompetitionMeals } from '../meals/MealPages'
@@ -75,94 +76,144 @@ function Pager({
   )
 }
 
-export function CompetitionsPage() {
-  const session = useSession()
-  const [scope, setScope] = useState<'public' | 'mine'>('public')
+function CompetitionList({
+  scope,
+}: {
+  scope: Parameters<typeof api.listCompetitions>[0]
+}) {
   const [page, setPage] = useState(0)
   const list = useQuery({
     queryKey: ['competitions', 'list', scope, page],
     queryFn: ({ signal }) => api.listCompetitions(scope, page, signal),
-    enabled: scope === 'public' || Boolean(session.data?.user),
   })
+  return (
+    <>
+      {list.isPending && <p role="status">Loading competitions...</p>}
+      <ErrorNotice error={list.error} />
+      {list.isError && (
+        <button className="text-button" onClick={() => void list.refetch()}>
+          Try again
+        </button>
+      )}
+      {!list.isError && list.data && (
+        <>
+          {list.data.items.length === 0 && (
+            <p>
+              {scope === 'administered'
+                ? 'No competitions to administer yet.'
+                : 'No competitions here yet.'}
+            </p>
+          )}
+          <div className="competition-grid">
+            {list.data.items.map((item) => (
+              <article className="competition-card" key={item.id}>
+                <span className="eyebrow">
+                  {phases[item.phase]} /{' '}
+                  {item.visibility === 'PUBLIC' ? 'Public' : 'Private'}
+                </span>
+                <h2>
+                  <Link to={`/competitions/${item.id}`}>{item.name}</Link>
+                </h2>
+                <p>
+                  {item.allTime ? (
+                    'All time / No end date'
+                  ) : (
+                    <>
+                      {formatTime(item.startsAt, item.timeZone)} to{' '}
+                      {formatTime(item.endsAt, item.timeZone)}
+                    </>
+                  )}
+                </p>
+                <p>
+                  {item.memberCount} joined / {item.timeZone}
+                </p>
+              </article>
+            ))}
+          </div>
+          <Pager page={page} hasMore={list.data.hasMore} change={setPage} />
+        </>
+      )}
+    </>
+  )
+}
+
+export function CompetitionsPage() {
+  const session = useSession()
   return (
     <section className="competition-page">
       <span className="eyebrow">Find your crew</span>
-      <h1>Competitions</h1>
-      <p>
-        Rank by actual inches. Whole hot dogs are counted separately. Eat at
-        your own pace.
-      </p>
-      <div className="competition-actions">
-        <button
-          className="text-button"
-          aria-pressed={scope === 'public'}
-          onClick={() => {
-            setScope('public')
-            setPage(0)
-          }}
+      <PageHeading title="Competitions">
+        <Link
+          className="button"
+          to={session.data?.user ? '/competitions/new' : '/learn/competitions'}
         >
-          Public competitions
-        </button>
-        <button
-          className="text-button"
-          aria-pressed={scope === 'mine'}
-          onClick={() => {
-            setScope('mine')
-            setPage(0)
-          }}
-        >
-          My competitions
-        </button>
-        <Link className="button" to="/competitions/new">
           Create a competition
         </Link>
-      </div>
-      {scope === 'mine' && !session.data?.user ? (
-        <p>
-          <Link to="/sign-in">Sign in</Link> to see your memberships and drafts.
-        </p>
-      ) : (
-        <>
-          {list.isPending && <p role="status">Loading competitions...</p>}
-          <ErrorNotice error={list.error} />
-          {list.isError && (
-            <button className="text-button" onClick={() => void list.refetch()}>
-              Try again
-            </button>
-          )}
-          {!list.isError && list.data && (
-            <>
-              {list.data.items.length === 0 && <p>No competitions here yet.</p>}
-              <div className="competition-grid">
-                {list.data.items.map((item) => (
-                  <article className="competition-card" key={item.id}>
-                    <span className="eyebrow">
-                      {phases[item.phase]} /{' '}
-                      {item.visibility === 'PUBLIC' ? 'Public' : 'Private'}
-                    </span>
-                    <h2>
-                      <Link to={`/competitions/${item.id}`}>{item.name}</Link>
-                    </h2>
-                    <p>
-                      {formatTime(item.startsAt, item.timeZone)} to{' '}
-                      {formatTime(item.endsAt, item.timeZone)}
-                    </p>
-                    <p>
-                      {item.memberCount} joined / {item.timeZone}
-                    </p>
-                  </article>
-                ))}
-              </div>
-              <Pager page={page} hasMore={list.data.hasMore} change={setPage} />
-            </>
-          )}
-        </>
+      </PageHeading>
+      <p>
+        Track hot dog count, measured inches, or both. Eat at your own pace.
+      </p>
+      {session.data?.user && (
+        <section
+          className="competition-section"
+          aria-labelledby="joined-competitions"
+        >
+          <h2 id="joined-competitions">My competitions</h2>
+          <p>
+            Your joined competitions. Manage drafts and your full history from
+            your profile.
+          </p>
+          <CompetitionList scope="joined" />
+        </section>
       )}
+      <section
+        className="competition-section"
+        aria-labelledby="public-competitions"
+      >
+        <h2 id="public-competitions">Public competitions</h2>
+        <CompetitionList scope="public" />
+      </section>
     </section>
   )
 }
 
-function CompetitionForm({ initial }: { initial?: api.Competition }) {
+export function MyCompetitionsPage() {
+  return (
+    <section className="competition-page">
+      <Link to="/account">Your profile</Link>
+      <PageHeading title="My competitions">
+        <Link className="button" to="/competitions/new">
+          Create a competition
+        </Link>
+      </PageHeading>
+      <p>
+        Your organized competitions, other memberships, and competition history.
+      </p>
+      <section
+        className="competition-section"
+        aria-labelledby="administered-competitions"
+      >
+        <h2 id="administered-competitions">Competitions I administer</h2>
+        <CompetitionList scope="administered" />
+      </section>
+      <section
+        className="competition-section"
+        aria-labelledby="participating-competitions"
+      >
+        <h2 id="participating-competitions">Other competitions</h2>
+        <CompetitionList scope="participating" />
+      </section>
+    </section>
+  )
+}
+
+function CompetitionForm({
+  initial,
+  emailEnabled,
+}: {
+  initial?: api.Competition
+  emailEnabled: boolean
+}) {
   const navigate = useNavigate()
   const refresh = useRefresh()
   const [name, setName] = useState(initial?.name ?? '')
@@ -176,7 +227,9 @@ function CompetitionForm({ initial }: { initial?: api.Competition }) {
       'UTC',
   )
   const first = initial ? fromInstant(initial.startsAt, initial.timeZone) : null
-  const last = initial ? fromInstant(initial.endsAt, initial.timeZone) : null
+  const last = initial?.endsAt
+    ? fromInstant(initial.endsAt, initial.timeZone)
+    : null
   const [start, setStart] = useState(first?.local ?? '')
   const [end, setEnd] = useState(last?.local ?? '')
   const [startOccurrence, setStartOccurrence] = useState<Occurrence>(
@@ -186,6 +239,10 @@ function CompetitionForm({ initial }: { initial?: api.Competition }) {
     last?.occurrence ?? 'reject',
   )
   const [sharing, setSharing] = useState(initial?.allowSharedMeals ?? false)
+  const [trackingMode, setTrackingMode] = useState<api.TrackingMode>(
+    initial?.trackingMode ?? 'BOTH',
+  )
+  const [emails, setEmails] = useState('')
   const save = useMutation({
     mutationFn: async () => {
       const settings: api.Settings = {
@@ -196,14 +253,36 @@ function CompetitionForm({ initial }: { initial?: api.Competition }) {
         startsAt: toInstant(start, zone, startOccurrence),
         endsAt: toInstant(end, zone, endOccurrence),
         allowSharedMeals: sharing,
+        trackingMode,
       }
-      return initial
-        ? api.updateCompetition(initial.id, initial.version, settings)
-        : api.createCompetition(settings)
+      if (initial)
+        return api.updateCompetition(initial.id, initial.version, settings)
+      const recipients = [
+        ...new Set(
+          emails
+            .split(/[\s,;]+/)
+            .filter(Boolean)
+            .map((email) => email.toLowerCase()),
+        ),
+      ]
+      if (
+        recipients.length > 20 ||
+        recipients.some(
+          (email) =>
+            email.length > 254 ||
+            !/^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$/.test(email),
+        )
+      )
+        throw new Error(
+          'Enter up to 20 valid email addresses, separated by commas, spaces, or new lines.',
+        )
+      return api.createCompetition(settings, recipients)
     },
     onSuccess: async (result) => {
       await refresh()
-      navigate(`/competitions/${result.id}`)
+      navigate(`/competitions/${result.id}`, {
+        state: { showEmailInvitations: !initial && Boolean(emails.trim()) },
+      })
     },
   })
   const timeField = (
@@ -272,6 +351,22 @@ function CompetitionForm({ initial }: { initial?: api.Competition }) {
         <option value="PRIVATE">Private: invitation required</option>
         <option value="PUBLIC">Public: anyone can discover and join</option>
       </select>
+      <label htmlFor="tracking-mode">What are you tracking?</label>
+      <select
+        id="tracking-mode"
+        value={trackingMode}
+        onChange={(event) =>
+          setTrackingMode(event.target.value as api.TrackingMode)
+        }
+      >
+        <option value="COUNT">Hot dog count</option>
+        <option value="LENGTH">Length in inches</option>
+        <option value="BOTH">Count and length</option>
+      </select>
+      <p className="form-note">
+        Count competitions rank by hot dogs. Length and combined competitions
+        rank by inches; counts never break ties.
+      </p>
       <label htmlFor="time-zone">Competition time zone</label>
       <input
         id="time-zone"
@@ -307,6 +402,25 @@ function CompetitionForm({ initial }: { initial?: api.Competition }) {
         elapsed hours. All settings lock when the published eating window
         starts.
       </p>
+      {!initial && (
+        <>
+          <label htmlFor="invitation-emails">Invite by email (optional)</label>
+          <textarea
+            id="invitation-emails"
+            rows={4}
+            maxLength={6000}
+            disabled={!emailEnabled}
+            value={emails}
+            onChange={(event) => setEmails(event.target.value)}
+            aria-describedby="invitation-emails-hint"
+          />
+          <p id="invitation-emails-hint" className="form-note">
+            {emailEnabled
+              ? 'Add up to 20 email addresses, separated by commas, spaces, or new lines. Duplicates are removed. Invitations are sent only when you publish, and recipients must sign in and accept to join. Recipients cannot see each other.'
+              : 'Email invitations require configured email delivery. You can still create a draft and share invitation links after publishing.'}
+          </p>
+        </>
+      )}
       <button className="button" disabled={save.isPending}>
         {save.isPending
           ? 'Saving...'
@@ -332,7 +446,9 @@ export function CompetitionEditorPage() {
       <Link to={id ? `/competitions/${id}` : '/competitions'}>
         Back to competitions
       </Link>
-      <h1>{id ? 'Competition settings' : 'Create a competition'}</h1>
+      <PageHeading
+        title={id ? 'Competition settings' : 'Create a competition'}
+      />
       {session.isPending && <p role="status">Loading your account...</p>}
       <ErrorNotice error={session.error} />
       {session.data && !session.data.user && (
@@ -345,7 +461,7 @@ export function CompetitionEditorPage() {
           <ErrorNotice error={detail.error} />
           {id && detail.isPending && <p role="status">Loading settings...</p>}
           {!id ? (
-            <CompetitionForm />
+            <CompetitionForm emailEnabled={session.data.emailEnabled} />
           ) : (
             detail.data &&
             !detail.isError &&
@@ -362,6 +478,7 @@ export function CompetitionEditorPage() {
               <CompetitionForm
                 key={`${id}-${detail.data.version}`}
                 initial={detail.data}
+                emailEnabled={session.data.emailEnabled}
               />
             ))
           )}
@@ -387,9 +504,13 @@ function MemberEntry({
   return (
     <li className="member-row">
       <strong>{member.displayName}</strong> /{' '}
-      {member.role === 'ORGANIZER' ? 'Organizer' : 'Participant'} /{' '}
-      {member.status === 'ACTIVE' ? 'Joined' : 'Excluded'}
-      {competition.viewerRole === 'ORGANIZER' &&
+      {member.role === 'ORGANIZER'
+        ? competition.allTime
+          ? 'Admin'
+          : 'Organizer'
+        : 'Participant'}{' '}
+      / {member.status === 'ACTIVE' ? 'Joined' : 'Excluded'}
+      {competition.canAdminister &&
         member.role !== 'ORGANIZER' &&
         member.status === 'ACTIVE' && (
           <form
@@ -450,7 +571,118 @@ function Members({ competition }: { competition: api.Competition }) {
   )
 }
 
-function Invitations({ competition }: { competition: api.Competition }) {
+function EmailInvitations({
+  competition,
+  initiallyOpen,
+}: {
+  competition: api.Competition
+  initiallyOpen: boolean
+}) {
+  const refresh = useRefresh()
+  const cache = useQueryClient()
+  const [open, setOpen] = useState(initiallyOpen)
+  const emails = useQuery({
+    queryKey: ['competitions', 'invitation-emails', competition.id],
+    queryFn: ({ signal }) => api.listInvitationEmails(competition.id, signal),
+    enabled: open,
+    retry: false,
+    refetchInterval: (query) =>
+      open &&
+      ['SCHEDULED', 'ACTIVE'].includes(competition.phase) &&
+      query.state.data?.some((email) => email.status === 'PENDING')
+        ? 2000
+        : false,
+  })
+  const sentCount =
+    emails.data?.filter((email) => email.status === 'SENT').length ?? 0
+  useEffect(() => {
+    if (sentCount)
+      void cache.invalidateQueries({
+        queryKey: ['competitions', 'invitations', competition.id],
+      })
+  }, [cache, competition.id, sentCount])
+  const send = useMutation({
+    mutationFn: () => api.sendInvitationEmails(competition.id),
+    onSuccess: refresh,
+  })
+  const errors: Record<string, string> = {
+    EMAIL_DISABLED:
+      'Email delivery is disabled. Configure email before retrying.',
+    EMAIL_RATE_LIMIT:
+      'Email limit reached. Wait at least a minute before retrying; hourly limits also apply.',
+    INVITATION_LIMIT:
+      'The 20 active-link limit is full. Revoke an unused link before retrying.',
+    DELIVERY_FAILED:
+      'SMTP delivery failed. Check email configuration before retrying.',
+  }
+  return (
+    <details
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>Email invitations</summary>
+      <p>
+        Recipients are visible only to you. Draft invitations wait until
+        publication. Sent means the mail server accepted the message, not that
+        it reached the inbox. Delivery runs in the background. If invitations
+        remain waiting after an interruption, retry them below.
+      </p>
+      {emails.isLoading && <p role="status">Loading email invitations...</p>}
+      <ErrorNotice error={emails.error} />
+      {emails.isError && (
+        <button className="text-button" onClick={() => void emails.refetch()}>
+          Retry email status
+        </button>
+      )}
+      {emails.data && (
+        <>
+          {!emails.data.length && (
+            <p>
+              No email invitations were added when this competition was created.
+            </p>
+          )}
+          <ul className="member-list">
+            {emails.data.map((email) => (
+              <li key={email.id}>
+                <strong>{email.email}</strong> /{' '}
+                {email.status === 'PENDING'
+                  ? 'Waiting to send'
+                  : email.status === 'SENT'
+                    ? 'Sent'
+                    : 'Not sent'}
+                {email.lastError && (
+                  <p className="form-error">{errors[email.lastError]}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+          {emails.data.some((email) => email.status !== 'SENT') && (
+            <button
+              type="button"
+              className="text-button"
+              disabled={
+                send.isPending ||
+                !['SCHEDULED', 'ACTIVE'].includes(competition.phase)
+              }
+              onClick={() => send.mutate()}
+            >
+              Send pending or failed invitations
+            </button>
+          )}
+        </>
+      )}
+      <ErrorNotice error={send.error} />
+    </details>
+  )
+}
+
+function Invitations({
+  competition,
+  showEmails,
+}: {
+  competition: api.Competition
+  showEmails: boolean
+}) {
   const refresh = useRefresh()
   const invitations = useQuery({
     queryKey: ['competitions', 'invitations', competition.id],
@@ -470,6 +702,7 @@ function Invitations({ competition }: { competition: api.Competition }) {
   return (
     <section className="competition-section">
       <h2>Invitations</h2>
+      <EmailInvitations competition={competition} initiallyOpen={showEmails} />
       <p>
         Anyone holding a link may join until it expires or you revoke it. Links
         expire after seven days or when eating ends, whichever comes first. Copy
@@ -529,6 +762,7 @@ function Invitations({ competition }: { competition: api.Competition }) {
 
 export function CompetitionPage() {
   const { id = '' } = useParams()
+  const location = useLocation()
   const session = useSession()
   const refresh = useRefresh()
   const detail = useQuery({
@@ -540,9 +774,20 @@ export function CompetitionPage() {
     mutationFn: () => api.publishCompetition(id, detail.data!.version),
     onSuccess: refresh,
   })
+  const cache = useQueryClient()
+  const refreshMembership = () =>
+    Promise.all([
+      refresh(),
+      cache.invalidateQueries({ queryKey: ['meals'] }),
+      cache.invalidateQueries({ queryKey: ['feed'] }),
+    ])
   const join = useMutation({
     mutationFn: () => api.joinCompetition(id),
-    onSuccess: refresh,
+    onSuccess: refreshMembership,
+  })
+  const leave = useMutation({
+    mutationFn: () => api.leaveCompetition(id),
+    onSuccess: refreshMembership,
   })
   const item = detail.data
   return (
@@ -561,24 +806,67 @@ export function CompetitionPage() {
             {phases[item.phase]} /{' '}
             {item.visibility === 'PRIVATE' ? 'Private' : 'Public'}
           </span>
-          <h1>{item.name}</h1>
-          <FeaturedVenues
-            competitionId={id}
-            organizer={item.viewerRole === 'ORGANIZER'}
-          />
+          <PageHeading title={item.name}>
+            {item.published && !item.allTime && (
+              <Link
+                className="button secondary"
+                to={`/competitions/${id}/recap`}
+              >
+                Competition recap
+              </Link>
+            )}
+            {item.canAdminister &&
+              ['CLOSED', 'FINALIZED', 'REVISED'].includes(item.phase) && (
+                <Link
+                  className="button secondary"
+                  to={`/competitions/${id}/corrections`}
+                >
+                  Correct competition scores
+                </Link>
+              )}
+            {item.viewerRole !== 'NONE' && (
+              <Link
+                className="button secondary"
+                to={`/competitions/${id}/progress`}
+              >
+                My competition progress
+              </Link>
+            )}
+            {item.canAdminister &&
+              ['DRAFT', 'SCHEDULED'].includes(item.phase) && (
+                <Link
+                  className="button secondary"
+                  to={`/competitions/${id}/settings`}
+                >
+                  Edit settings
+                </Link>
+              )}
+          </PageHeading>
+          {session.data?.user && !item.allTime && (
+            <FeaturedVenues competitionId={id} organizer={item.canAdminister} />
+          )}
           <p className="competition-rules">
             {item.rules || 'No additional written rules.'}
           </p>
           <dl className="competition-facts">
-            <dt>Eating starts</dt>
-            <dd>{formatTime(item.startsAt, item.timeZone)}</dd>
-            <dt>Eating ends</dt>
-            <dd>{formatTime(item.endsAt, item.timeZone)}</dd>
-            <dt>Submission cutoff</dt>
-            <dd>
-              {formatTime(item.submissionClosesAt, item.timeZone)} (24 elapsed
-              hours later)
-            </dd>
+            {item.allTime ? (
+              <>
+                <dt>Duration</dt>
+                <dd>All time / No end date</dd>
+              </>
+            ) : (
+              <>
+                <dt>Eating starts</dt>
+                <dd>{formatTime(item.startsAt, item.timeZone)}</dd>
+                <dt>Eating ends</dt>
+                <dd>{formatTime(item.endsAt, item.timeZone)}</dd>
+                <dt>Submission cutoff</dt>
+                <dd>
+                  {formatTime(item.submissionClosesAt, item.timeZone)} (24
+                  elapsed hours later)
+                </dd>
+              </>
+            )}
             <dt>Time zone</dt>
             <dd>{item.timeZone}</dd>
             <dt>Meal sharing</dt>
@@ -591,9 +879,18 @@ export function CompetitionPage() {
             <dd>{item.memberCount} joined</dd>
           </dl>
           <p>
-            Scoring uses total inches; whole hot dogs are tracked separately.
-            Eating timestamps must be before the eating end. Late joining is
-            allowed until then, and eligible meals may date back to the start.
+            Scoring uses{' '}
+            {item.trackingMode === 'COUNT' ? 'hot dog count' : 'total inches'}.
+            {item.allTime ? (
+              ' This shared leaderboard never closes. You choose which meals to submit; joining never publishes private meals automatically.'
+            ) : (
+              <>
+                {' '}
+                Eating timestamps must be before the eating end. Late joining is
+                allowed until then, and eligible meals may date back to the
+                start.
+              </>
+            )}
           </p>
           <p className="form-note">
             {item.visibility === 'PUBLIC' &&
@@ -607,57 +904,39 @@ export function CompetitionPage() {
               submission grace period.
             </p>
           )}
-          <p className="form-note">
-            Recaps finalize after the submission cutoff. Organizer score
-            corrections publish visibly revised recaps without changing source
-            meals.
-          </p>
+          {!item.allTime && (
+            <p className="form-note">
+              Recaps finalize after the submission cutoff. Organizer score
+              corrections publish visibly revised recaps without changing source
+              meals.
+            </p>
+          )}
           {item.published && (
-            <Link className="button secondary" to={`/competitions/${id}/recap`}>
-              Competition recap
-            </Link>
+            <Standings
+              key={`standings-${id}`}
+              id={id}
+              trackingMode={item.trackingMode}
+              allTime={item.allTime}
+            />
           )}
-          {item.viewerRole === 'ORGANIZER' &&
-            ['CLOSED', 'FINALIZED', 'REVISED'].includes(item.phase) && (
-              <Link
-                className="button secondary"
-                to={`/competitions/${id}/corrections`}
-              >
-                Correct competition scores
-              </Link>
+          {item.canAdminister &&
+            (!item.published ||
+              !['DRAFT', 'SCHEDULED'].includes(item.phase)) && (
+              <div className="competition-actions">
+                {!['DRAFT', 'SCHEDULED'].includes(item.phase) && (
+                  <p>Settings locked when eating started.</p>
+                )}
+                {!item.published && (
+                  <button
+                    className="button"
+                    disabled={publish.isPending}
+                    onClick={() => publish.mutate()}
+                  >
+                    Publish competition
+                  </button>
+                )}
+              </div>
             )}
-          {item.published && <Standings key={id} id={id} />}
-          {item.viewerRole !== 'NONE' && (
-            <Link
-              className="button secondary"
-              to={`/competitions/${id}/progress`}
-            >
-              My competition progress
-            </Link>
-          )}
-          {item.viewerRole === 'ORGANIZER' && (
-            <div className="competition-actions">
-              {['DRAFT', 'SCHEDULED'].includes(item.phase) ? (
-                <Link
-                  className="button secondary"
-                  to={`/competitions/${id}/settings`}
-                >
-                  Edit settings
-                </Link>
-              ) : (
-                <p>Settings locked when eating started.</p>
-              )}
-              {!item.published && (
-                <button
-                  className="button"
-                  disabled={publish.isPending}
-                  onClick={() => publish.mutate()}
-                >
-                  Publish competition
-                </button>
-              )}
-            </div>
-          )}
           <ErrorNotice error={publish.error} />
           {item.viewerRole !== 'NONE' && <CompetitionMeals id={id} />}
           {item.viewerRole === 'NONE' &&
@@ -677,9 +956,31 @@ export function CompetitionPage() {
               </p>
             ))}
           <ErrorNotice error={join.error} />
-          {item.viewerRole !== 'NONE' && <Members competition={item} />}
-          {item.viewerRole === 'ORGANIZER' && (
-            <Invitations competition={item} />
+          {item.allTime && item.viewerRole !== 'NONE' && (
+            <div className="competition-section">
+              <p>
+                Leaving withdraws your all-time submissions. Your private meals
+                and other competitions stay unchanged. You can rejoin later.
+              </p>
+              <button
+                className="text-button"
+                disabled={leave.isPending}
+                onClick={() => leave.mutate()}
+              >
+                Leave all-time competition
+              </button>
+              <ErrorNotice error={leave.error} />
+            </div>
+          )}
+          {(item.viewerRole !== 'NONE' || item.canAdminister) && (
+            <Members competition={item} />
+          )}
+          {item.canAdminister && (
+            <Invitations
+              key={`invitations-${id}`}
+              competition={item}
+              showEmails={Boolean(location.state?.showEmailInvitations)}
+            />
           )}
         </>
       )}
@@ -716,7 +1017,7 @@ export function InvitationPage() {
   return (
     <section className="competition-page narrow">
       <span className="eyebrow">A seat at the table</span>
-      <h1>Competition invitation</h1>
+      <PageHeading title="Competition invitation" />
       {!token && <p>Reopen your invitation link to continue.</p>}
       {token && preview.isPending && (
         <p role="status">Checking invitation...</p>
@@ -727,8 +1028,14 @@ export function InvitationPage() {
           <h2>{preview.data.name}</h2>
           <p className="competition-rules">{preview.data.rules}</p>
           <p>
-            {formatTime(preview.data.startsAt, preview.data.timeZone)} to{' '}
-            {formatTime(preview.data.endsAt, preview.data.timeZone)}
+            {preview.data.endsAt === null ? (
+              'All time / No end date'
+            ) : (
+              <>
+                {formatTime(preview.data.startsAt, preview.data.timeZone)} to{' '}
+                {formatTime(preview.data.endsAt, preview.data.timeZone)}
+              </>
+            )}
           </p>
           <p>
             Joining shares your display name with the competition. Future

@@ -76,6 +76,94 @@ class MealIntegrationTests {
   }
 
   @Test
+  void acceptsSimpleCountsWithoutInventingLengthsLocationsOrAnEnteredTime() throws Exception {
+    var request = UUID.randomUUID();
+    String body =
+        """
+        {"requestId":"%s","version":0,"competitionIds":[],
+         "content":{"notes":"","items":[],"photoIds":[],"totalHundredths":0,"wholeHotDogs":3}}
+        """
+            .formatted(request);
+    mvc.perform(
+            post("/api/v1/meals")
+                .with(as(author))
+                .with(csrf())
+                .contentType("application/json")
+                .content(body))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.revision.totalHundredths").value(0))
+        .andExpect(jsonPath("$.revision.wholeHotDogs").value(3))
+        .andExpect(jsonPath("$.revision.eatenAt").isNotEmpty())
+        .andExpect(jsonPath("$.revision.location").value(""))
+        .andExpect(jsonPath("$.revision.items").isEmpty());
+    var first = meals.list(author, false, 0).items().getFirst();
+    mvc.perform(
+            post("/api/v1/meals")
+                .with(as(author))
+                .with(csrf())
+                .contentType("application/json")
+                .content(body))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.revision.eatenAt").value(first.revision().eatenAt().toString()));
+    assertThat(count("meal_revisions")).isEqualTo(1);
+    assertThat(first.revision().eatenAt()).isBetween(Instant.now().minusSeconds(10), Instant.now());
+  }
+
+  @Test
+  void requiresTheTrackedMeasurementForEveryTargetAndRetainsUnionTotals() {
+    var countOnly = active(true, CompetitionService.TrackingMode.COUNT);
+    var lengthOnly = active(true, CompetitionService.TrackingMode.LENGTH);
+    var counts = new Content(null, null, "", "", List.of(), List.of(), 0L, 3);
+    var lengths = new Content(null, null, "", "", List.of(), List.of(), 1825L, 0);
+    assertThat(
+            meals
+                .save(null, author, save(0, counts, List.of(countOnly.id())))
+                .revision()
+                .totalHundredths())
+        .isZero();
+    assertThat(
+            meals
+                .save(null, author, save(0, lengths, List.of(lengthOnly.id())))
+                .revision()
+                .wholeHotDogs())
+        .isZero();
+    rejected(
+        "MEASUREMENT_REQUIRED",
+        () -> meals.save(null, author, save(0, counts, List.of(countOnly.id(), lengthOnly.id()))));
+    rejected(
+        "MEASUREMENT_REQUIRED",
+        () -> meals.save(null, author, save(0, lengths, List.of(countOnly.id()))));
+    var both = new Content(null, null, "", "", List.of(), List.of(), 1825L, 3);
+    assertThat(
+            meals
+                .save(null, author, save(0, both, List.of(countOnly.id(), lengthOnly.id())))
+                .submissions())
+        .hasSize(2)
+        .allSatisfy(
+            entry -> {
+              assertThat(entry.totalHundredths()).isEqualTo(1825);
+              assertThat(entry.wholeHotDogs()).isEqualTo(3);
+            });
+    rejected(
+        "INVALID_MEASUREMENT",
+        () ->
+            meals.save(
+                null,
+                author,
+                save(0, new Content(null, null, "", "", List.of(), List.of(), 0L, 0), List.of())));
+    rejected(
+        "INVALID_MEASUREMENT",
+        () ->
+            meals.save(
+                null,
+                author,
+                save(
+                    0,
+                    new Content(null, null, "", "", content().items(), List.of(), 1825L, 3),
+                    List.of())));
+  }
+
+  @Test
   void calculatesActualLengthsPartialOnlyAndWholeCountsWithoutStandardSizing() {
     var meal =
         meals.save(
@@ -401,7 +489,7 @@ class MealIntegrationTests {
     var photo = meals.upload(author, encoded.toByteArray());
     mvc.perform(get("/api/v1/meal-photos/" + photo).with(as(member)))
         .andExpect(status().isNotFound());
-    mvc.perform(get("/api/v1/directory/photos/" + photo)).andExpect(status().isNotFound());
+    mvc.perform(get("/api/v1/directory/photos/" + photo)).andExpect(status().isUnauthorized());
     var withPhoto =
         new Content(
             content().eatenAt(), null, "Private place", "", content().items(), List.of(photo));
@@ -574,7 +662,24 @@ class MealIntegrationTests {
   }
 
   private CompetitionService.Competition active(boolean sharing) {
-    var draft = competitions.create(author, settings(sharing));
+    return active(sharing, CompetitionService.TrackingMode.BOTH);
+  }
+
+  private CompetitionService.Competition active(
+      boolean sharing, CompetitionService.TrackingMode mode) {
+    var settings = settings(sharing);
+    var draft =
+        competitions.create(
+            author,
+            new CompetitionService.Settings(
+                settings.name(),
+                settings.rules(),
+                settings.visibility(),
+                settings.timeZone(),
+                settings.startsAt(),
+                settings.endsAt(),
+                sharing,
+                mode));
     var published = competitions.publish(draft.id(), author, draft.version());
     var invite = competitions.invite(published.id(), author);
     competitions.joinInvitation(

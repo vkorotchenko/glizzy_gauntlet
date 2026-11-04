@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { PageHeading } from '../PageHeading'
 import { Link } from 'react-router-dom'
 import { loadSession } from '../auth/api'
 import { listCompetitions } from '../competitions/api'
@@ -7,6 +8,132 @@ import { formatTime } from '../competitions/time'
 import { MealSummary } from '../meals/MealPages'
 import { formatInches } from '../meals/measurement'
 import * as api from './api'
+
+function SampleFeed() {
+  return (
+    <section className="sample-feed" aria-label="Sample feed">
+      <h2>A taste of the feed</h2>
+      <p className="form-note">
+        Example data, not real people or competition scores. Choose a card to
+        learn how to get started. Your crew's meals will replace these examples.
+      </p>
+      <div className="meal-feed">
+        {[
+          {
+            title: 'Start a competition',
+            path: '/learn/competitions',
+            description:
+              'See a sample competition, its rules, and its leaderboard.',
+            count: 2,
+            inches: '12.00',
+            picnic: false,
+          },
+          {
+            title: 'Log in or create an account',
+            path: '/learn/account',
+            description:
+              'See the benefits of joining and how your private meal log works.',
+            count: 1,
+            inches: '8.00',
+            picnic: true,
+          },
+        ].map((sample) => (
+          <article
+            className="competition-card meal-feed-card"
+            key={sample.title}
+          >
+            <Link
+              className="tutorial-link"
+              to={sample.path}
+              aria-label={sample.title}
+            >
+              <header className="feed-card-heading">
+                <span className="feed-avatar" aria-hidden="true">
+                  GG
+                </span>
+                <div>
+                  <h2>glizzy gauntlet</h2>
+                  <span className="eyebrow">Getting started / Sample meal</span>
+                </div>
+              </header>
+              <svg
+                className="sample-meal-image"
+                viewBox="0 0 640 320"
+                role="img"
+                aria-label={
+                  sample.picnic
+                    ? 'Hot dog at a picnic, sample illustration'
+                    : 'Hot dog with mustard, sample illustration'
+                }
+              >
+                <rect
+                  width="640"
+                  height="320"
+                  fill={sample.picnic ? '#dce8d3' : '#f3e0bb'}
+                />
+                <ellipse cx="320" cy="175" rx="240" ry="105" fill="#fffaf0" />
+                <g
+                  transform={
+                    sample.picnic ? 'rotate(8 320 160)' : 'rotate(-8 320 160)'
+                  }
+                >
+                  <rect
+                    x="125"
+                    y="106"
+                    width="390"
+                    height="112"
+                    rx="56"
+                    fill="#c58b45"
+                  />
+                  <rect
+                    x="125"
+                    y="96"
+                    width="390"
+                    height="104"
+                    rx="52"
+                    fill="#edc88c"
+                  />
+                  <rect
+                    x="112"
+                    y="123"
+                    width="416"
+                    height="62"
+                    rx="31"
+                    fill="#a73228"
+                  />
+                  <path
+                    d="M155 154 Q175 128 195 154 T235 154 T275 154 T315 154 T355 154 T395 154 T435 154 T475 154"
+                    fill="none"
+                    stroke="#f7c74d"
+                    strokeWidth="9"
+                    strokeLinecap="round"
+                  />
+                  {sample.picnic && (
+                    <path
+                      d="M175 178 l12 -9 m42 12 l12 -9 m42 12 l12 -9 m42 12 l12 -9 m42 12 l12 -9"
+                      stroke="#53804c"
+                      strokeWidth="9"
+                      strokeLinecap="round"
+                    />
+                  )}
+                </g>
+              </svg>
+              <h3>{sample.title}</h3>
+              <p className="meal-totals">
+                <strong>
+                  {sample.count} {sample.count === 1 ? 'hot dog' : 'hot dogs'}
+                </strong>
+                {' / '}
+                {sample.inches} inches
+              </p>
+              <p className="form-note">{sample.description}</p>
+            </Link>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
 
 function MealCard({ item, userId }: { item: api.FeedItem; userId: string }) {
   const cache = useQueryClient()
@@ -41,7 +168,7 @@ function MealCard({ item, userId }: { item: api.FeedItem; userId: string }) {
           </Link>
         </div>
       </header>
-      <MealSummary revision={item.revision} />
+      <MealSummary revision={item.revision} showTotals={false} />
       {item.scoreExcluded ? (
         <p className="form-note">Excluded from this competition's scoring.</p>
       ) : (
@@ -53,22 +180,39 @@ function MealCard({ item, userId }: { item: api.FeedItem; userId: string }) {
           </p>
         )
       )}
-      <div className="feed-card-actions">
-        <button
-          type="button"
-          className="glizzy-button"
-          aria-pressed={item.reacted}
-          disabled={reaction.isPending}
-          onClick={() => reaction.mutate(!item.reacted)}
-        >
-          <span aria-hidden="true">&#127789;</span>{' '}
-          {item.reacted ? 'Glizzy sent' : 'Send a glizzy'}
-        </button>
-        <span aria-live="polite">
-          {item.reactionCount}{' '}
-          {item.reactionCount === 1 ? 'glizzy' : 'glizzies'}
-        </span>
-      </div>
+      <footer
+        className="feed-card-actions"
+        role="group"
+        aria-label="Meal totals and likes"
+      >
+        <p className="meal-totals">
+          <strong>
+            {item.revision.wholeHotDogs}{' '}
+            {item.revision.wholeHotDogs === 1 ? 'hot dog' : 'hot dogs'}
+          </strong>
+          {item.revision.totalHundredths > 0 && (
+            <>
+              {' / '}
+              <span>{formatInches(item.revision.totalHundredths)} inches</span>
+            </>
+          )}
+        </p>
+        <div className="feed-card-likes">
+          <span aria-live="polite">
+            {item.reactionCount} {item.reactionCount === 1 ? 'like' : 'likes'}
+          </span>
+          <button
+            type="button"
+            className="like-button"
+            aria-pressed={item.reacted}
+            disabled={reaction.isPending}
+            onClick={() => reaction.mutate(!item.reacted)}
+          >
+            <span aria-hidden="true">&#128077;</span>{' '}
+            {item.reacted ? 'Liked' : 'Like'}
+          </button>
+        </div>
+      </footer>
       {reaction.error && (
         <p role="alert" className="form-error">
           {reaction.error.message}
@@ -87,15 +231,7 @@ function CompetitorFeed({ userId }: { userId: string }) {
   return (
     <section className="competition-page feed-page">
       <span className="eyebrow">Fresh from your crew</span>
-      <h1>The latest bites.</h1>
-      <p>
-        Recent meals from competitors across your joined competitions. Send a
-        glizzy to cheer them on; reactions never change scores.
-      </p>
-      <div className="competition-actions">
-        <Link className="button" to="/meals/new">
-          Log a meal
-        </Link>
+      <PageHeading title="Your feed">
         <button
           className="text-button"
           disabled={feed.isFetching}
@@ -103,7 +239,14 @@ function CompetitorFeed({ userId }: { userId: string }) {
         >
           Refresh feed
         </button>
-      </div>
+        <Link className="button" to="/meals/new">
+          Log a meal
+        </Link>
+      </PageHeading>
+      <p>
+        Recent meals from competitors across your joined competitions. Like a
+        post to cheer them on; likes never change scores.
+      </p>
       {feed.isPending && <p role="status">Loading your crew's meals...</p>}
       {feed.error && (
         <p role="alert" className="form-error">
@@ -124,6 +267,7 @@ function CompetitorFeed({ userId }: { userId: string }) {
               <Link to="/competitions">Find a competition</Link>
             </div>
           )}
+          {page === 0 && feed.data.items.length === 0 && <SampleFeed />}
           <div className="meal-feed">
             {feed.data.items.map((item) => (
               <MealCard key={item.id} item={item} userId={userId} />
@@ -150,7 +294,7 @@ function CompetitorFeed({ userId }: { userId: string }) {
       </div>
       <p className="form-note">
         Each card belongs to its named competition. A meal shared with multiple
-        competitions can appear in each, with separate glizzies.
+        competitions can appear in each, with separate likes.
       </p>
     </section>
   )
@@ -165,22 +309,23 @@ function GuestHome() {
     <section className="competition-page">
       <div className="competition-section feed-welcome">
         <span className="eyebrow">Good dogs. Good company.</span>
-        <h1>Your crew's next chapter starts here.</h1>
+        <PageHeading title="Your feed starts here.">
+          <Link className="button" to="/sign-in">
+            Sign in to see your feed
+          </Link>
+        </PageHeading>
         <p>
           Sign in to see your competitors' latest meals, track your own bites,
           and send a glizzy when someone deserves a cheer.
         </p>
-        <Link className="button" to="/sign-in">
-          Sign in to see your feed
-        </Link>
         <p className="form-note">
           Meal details and photos stay within joined competitions.
         </p>
       </div>
-      <div className="section-heading">
-        <h2>Explore public competitions</h2>
+      <SampleFeed />
+      <PageHeading title="Explore public competitions" level={2}>
         <Link to="/competitions">Browse all competitions</Link>
-      </div>
+      </PageHeading>
       {competitions.isPending && (
         <p role="status">Loading public competitions...</p>
       )}
@@ -234,7 +379,7 @@ export function HomePage() {
   if (session.isError)
     return (
       <section className="competition-page">
-        <h1>Your crew is waiting.</h1>
+        <PageHeading title="Your crew is waiting." />
         <p role="alert" className="form-error">
           {session.error.message}
         </p>

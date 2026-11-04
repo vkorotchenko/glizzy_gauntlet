@@ -27,10 +27,12 @@ const competition = {
   endsAt: '2026-11-01T00:00:00Z',
   submissionClosesAt: '2026-11-02T00:00:00Z',
   allowSharedMeals: true,
+  trackingMode: 'BOTH',
   published: true,
   version: 1,
   phase: 'ACTIVE',
   viewerRole: 'MEMBER',
+  canAdminister: false,
   memberCount: 2,
 }
 const meal: Meal = {
@@ -193,6 +195,8 @@ describe('meal screens', () => {
       expect(body?.content.eatenAt).toBe(precise.revision.eatenAt),
     )
     expect(body?.content.notes).toBe('Updated notes')
+    expect(body?.content.items).toEqual(meal.revision.items)
+    expect(body?.content).not.toHaveProperty('totalHundredths')
   })
 
   it('requires explicit target selection and retries the same payload with one idempotency key', async () => {
@@ -215,22 +219,12 @@ describe('meal screens', () => {
     )
     show('/meals/new')
     const time = await screen.findByLabelText('When you ate')
-    expect((time as HTMLInputElement).value).toMatch(/T\d{2}:(00|15|30|45)$/)
-    fireEvent.change(await screen.findByLabelText('Item 1 name'), {
-      target: { value: 'House dog' },
-    })
-    fireEvent.change(screen.getByLabelText('Item 1 whole quantity'), {
+    expect(time).toHaveValue('')
+    fireEvent.change(await screen.findByLabelText('How many hot dogs?'), {
       target: { value: '2' },
     })
-    fireEvent.change(screen.getByLabelText('Item 1 full length (inches)'), {
-      target: { value: '8' },
-    })
-    fireEvent.change(
-      screen.getByLabelText('Item 1 additional partial inches'),
-      { target: { value: '3' } },
-    )
-    fireEvent.change(screen.getByLabelText('Private location label'), {
-      target: { value: 'Kitchen' },
+    fireEvent.change(screen.getByLabelText('Total inches'), {
+      target: { value: '19' },
     })
     const target = await screen.findByRole('checkbox', {
       name: 'Submit to Shared crew',
@@ -258,9 +252,15 @@ describe('meal screens', () => {
     expect(saved[0]).toMatchObject({
       version: 0,
       competitionIds: [competition.id],
-      content: { items: meal.revision.items, location: 'Kitchen' },
+      content: {
+        items: [],
+        totalHundredths: 1900,
+        wholeHotDogs: 2,
+        location: '',
+        photoIds: [],
+      },
     })
-    expect(saved[0].content).not.toHaveProperty('totalHundredths')
+    expect(saved[0].content).not.toHaveProperty('eatenAt')
     expect(screen.getByText('19.00 inches')).toBeVisible()
   })
 
@@ -268,12 +268,9 @@ describe('meal screens', () => {
     const fetch = vi.fn(async (request: Request) => reply(request))
     vi.stubGlobal('fetch', fetch)
     show(`/meals/${meal.id}/edit`)
-    fireEvent.change(
-      await screen.findByLabelText('Item 1 full length (inches)'),
-      {
-        target: { value: '8.001' },
-      },
-    )
+    fireEvent.change(await screen.findByLabelText('Total inches'), {
+      target: { value: '8.001' },
+    })
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Save meal and selected submissions',
@@ -348,7 +345,14 @@ describe('meal screens', () => {
         request.url.includes('/competitions?')
       )
         return Response.json({
-          items: request.url.includes('/competitions?') ? [competition] : [],
+          items: request.url.includes('/competitions?')
+            ? new URL(request.url).searchParams.get('page') === '0'
+              ? Array.from({ length: 20 }, (_, index) => ({
+                  ...competition,
+                  id: `crew-${index}`,
+                }))
+              : [{ ...competition, id: 'crew-last' }]
+            : [],
           hasMore: new URL(request.url).searchParams.get('page') === '0',
         })
       if (request.method === 'PUT')
@@ -357,14 +361,101 @@ describe('meal screens', () => {
     })
     vi.stubGlobal('fetch', fetch)
     show(`/meals/${meal.id}/edit`)
-    await screen.findByLabelText('Item 1 name')
-    await screen.findByRole('checkbox', { name: 'Submit to Shared crew' })
+    await screen.findByLabelText('Total inches')
+    fireEvent.click(
+      screen.getByText('Add photos, location, time, or notes (optional)'),
+    )
+    await screen.findAllByRole('checkbox', { name: 'Submit to Shared crew' })
     for (const button of screen.getAllByRole('button', { name: 'Next page' }))
       fireEvent.click(button)
     await waitFor(() => expect(screen.getAllByText('Page 2')).toHaveLength(2))
     expect(
       fetch.mock.calls.filter(([request]) => request.method !== 'GET'),
     ).toHaveLength(0)
-    expect(screen.getByLabelText('Item 1 name')).toHaveValue('House dog')
+    expect(screen.getByLabelText('Total inches')).toHaveValue('19.00')
+  })
+
+  it.each([
+    ['COUNT', true, false],
+    ['LENGTH', false, true],
+    ['BOTH', true, true],
+  ] as const)(
+    'shows and saves only the measurements needed for %s competitions',
+    async (trackingMode, count, length) => {
+      let saved: Save | undefined
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (request: Request) => {
+          if (request.url.includes('/competitions?'))
+            return Response.json({
+              items: [{ ...competition, trackingMode }],
+              hasMore: false,
+            })
+          if (request.method === 'POST' && request.url.endsWith('/meals')) {
+            saved = (await request.json()) as Save
+            return Response.json(meal, { status: 201 })
+          }
+          return reply(request)
+        }),
+      )
+      show('/meals/new')
+      await screen.findByRole('checkbox', { name: 'Submit to Shared crew' })
+      expect(Boolean(screen.queryByLabelText('How many hot dogs?'))).toBe(count)
+      expect(Boolean(screen.queryByLabelText('Total inches'))).toBe(length)
+      if (count)
+        fireEvent.change(screen.getByLabelText('How many hot dogs?'), {
+          target: { value: '3' },
+        })
+      if (length)
+        fireEvent.change(screen.getByLabelText('Total inches'), {
+          target: { value: '18.25' },
+        })
+      expect(screen.getByLabelText('When you ate')).not.toBeRequired()
+      expect(screen.getByLabelText('Private location label')).not.toBeRequired()
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'Save meal and selected submissions',
+        }),
+      )
+      await waitFor(() => expect(saved).toBeDefined())
+      expect(saved?.content).toMatchObject({
+        items: [],
+        totalHundredths: length ? 1825 : 0,
+        wholeHotDogs: count ? 3 : 0,
+        location: '',
+        photoIds: [],
+      })
+      expect(saved?.content).not.toHaveProperty('eatenAt')
+      expect(saved?.competitionIds).toEqual([])
+    },
+  )
+
+  it('unions measurements across all membership pages, not only selected targets', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: Request) => {
+        if (request.url.includes('/competitions?')) {
+          const page = new URL(request.url).searchParams.get('page')
+          return Response.json({
+            items: [
+              {
+                ...competition,
+                id: `crew-${page}`,
+                trackingMode: page === '0' ? 'COUNT' : 'LENGTH',
+              },
+            ],
+            hasMore: page === '0',
+          })
+        }
+        return reply(request)
+      }),
+    )
+    show('/meals/new')
+    expect(await screen.findByText('0 selected')).toBeVisible()
+    expect(screen.getByLabelText('How many hot dogs?')).toBeInTheDocument()
+    expect(screen.getByLabelText('Total inches')).toBeInTheDocument()
+    expect(
+      screen.getAllByRole('checkbox', { name: 'Submit to Shared crew' }),
+    ).toHaveLength(2)
   })
 })

@@ -104,19 +104,15 @@ test('keeps contributions and photos private, rejects disguised SVG, and support
     'Choose a valid JPEG or PNG',
   )
   const photo = await attachPhoto(page)
-  expect((await request.get(photo)).status()).toBe(404)
+  expect((await request.get(photo)).status()).toBe(401)
   expect((await request.get(`/api/v1${path}`)).status()).toBe(401)
   await page.getByRole('button', { name: 'Submit for review' }).click()
-  await expect(page.getByRole('status')).toContainText(
-    'Awaiting site-owner review',
-  )
+  await expect(page.getByRole('status')).toContainText('Awaiting venue review')
   await expect(page.getByRole('button', { name: 'Upload photo' })).toHaveCount(
     0,
   )
   await page.getByRole('button', { name: 'Discard contribution' }).click()
-  await expect(
-    page.getByRole('heading', { name: 'Venue directory' }),
-  ).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'My venues' })).toBeVisible()
   expect((await page.request.get(photo)).status()).toBe(404)
 })
 
@@ -138,9 +134,7 @@ test('reviews, publishes, features, hides, and restores approved listings', asyn
   await draft(page, name)
   const photo = await attachPhoto(page)
   await page.getByRole('button', { name: 'Submit for review' }).click()
-  await expect(page.getByRole('status')).toContainText(
-    'Awaiting site-owner review',
-  )
+  await expect(page.getByRole('status')).toContainText('Awaiting venue review')
   const origin = new URL(page.url()).origin
   const moderatorContext = await browser.newContext({
     baseURL: origin,
@@ -170,12 +164,12 @@ test('reviews, publishes, features, hides, and restores approved listings', asyn
         '-v',
         'ON_ERROR_STOP=1',
         '-c',
-        `UPDATE app_users SET site_owner = TRUE WHERE id = '${session.user.id}'`,
+        `INSERT INTO account_roles (user_id, role) VALUES ('${session.user.id}', 'ADMIN')`,
       ],
       { stdio: 'pipe' },
     )
-    await moderator.goto('/venues')
-    await moderator.getByRole('button', { name: 'Review queue' }).click()
+    await moderator.goto('/account')
+    await moderator.getByRole('link', { name: 'Review queue' }).click()
     await moderator.getByRole('link', { name, exact: true }).click()
     await expect(
       moderator.getByRole('button', { name: 'Discard contribution' }),
@@ -188,8 +182,16 @@ test('reviews, publishes, features, hides, and restores approved listings', asyn
       moderator.getByText('Review: Confirmed address and menu'),
     ).toBeVisible()
     const visitor = await visitorContext.newPage()
+    const venuePath = await moderator
+      .getByRole('link', { name: 'View current public listing' })
+      .getAttribute('href')
     await visitor.goto('/venues')
-    await visitor.getByRole('link', { name, exact: true }).click()
+    await expect(
+      visitor.getByRole('heading', { name: 'Sign in to continue' }),
+    ).toBeVisible()
+    expect((await visitor.request.get(photo)).status()).toBe(401)
+    await signIn(visitor, request, `directory-reader-${info.project.name}`)
+    await visitor.goto(venuePath!)
     await expect(
       visitor.getByRole('heading', { name, exact: true }),
     ).toBeVisible()
@@ -242,34 +244,36 @@ test('reviews, publishes, features, hides, and restores approved listings', asyn
     await expect
       .poll(async () => (await visitor.request.get(photo)).status())
       .toBe(200)
-    await visitor.goto('/venues')
     await visitor.route('https://tiles.openfreemap.org/**', (route) =>
       route.fulfill({
         json: { version: 8, sources: {}, layers: [] },
       }),
     )
-    await visitor
-      .getByRole('button', { name: 'Load map (external tiles)' })
-      .click()
+    await visitor.goto('/venues')
     await expect(
       visitor
         .getByRole('region', { name: 'Approved venue map' })
         .getByRole('button', { name, exact: true }),
     ).toBeVisible()
-    await visitor.getByRole('button', { name: 'Hide map' }).click()
+    await expect(
+      visitor.getByRole('button', {
+        name: /Load map|Hide map|Approved venues|My contributions/,
+      }),
+    ).toHaveCount(0)
+    await expect(visitor.getByRole('article')).toHaveCount(0)
     await visitor.unroute('https://tiles.openfreemap.org/**')
     await visitor.route('https://tiles.openfreemap.org/**', (route) =>
       route.abort(),
     )
-    await visitor
-      .getByRole('button', { name: 'Load map (external tiles)' })
-      .click()
+    await visitor.reload()
     await expect(
       visitor.getByText(
-        'Map unavailable. All venues are still in the list below.',
+        'Map unavailable. Refresh the page to try loading it again.',
       ),
     ).toBeVisible()
-    await expect(visitor.getByRole('link', { name, exact: true })).toBeVisible()
+    await expect(
+      visitor.getByRole('region', { name: 'Approved venue map' }),
+    ).toBeVisible()
     expect(
       await visitor.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,

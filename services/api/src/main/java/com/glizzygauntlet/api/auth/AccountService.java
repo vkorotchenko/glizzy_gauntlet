@@ -1,5 +1,6 @@
 package com.glizzygauntlet.api.auth;
 
+import com.glizzygauntlet.api.competitions.CompetitionService;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -10,47 +11,64 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class AccountService {
   private final JdbcTemplate database;
+  private final CompetitionService competitions;
+  private final GlobalRoleService roles;
 
-  public AccountService(JdbcTemplate database) {
+  public AccountService(
+      JdbcTemplate database, CompetitionService competitions, GlobalRoleService roles) {
     this.database = database;
+    this.competitions = competitions;
+    this.roles = roles;
   }
 
-  public record Profile(UUID id, String displayName, boolean siteOwner, List<String> providers) {}
+  public record Profile(
+      UUID id,
+      String displayName,
+      boolean siteOwner,
+      List<String> providers,
+      List<GlobalRoleService.Role> roles) {}
 
   public Profile profile(UUID id) {
     var profiles =
         database.query(
-            "SELECT id, display_name, site_owner FROM app_users WHERE id = ?",
+            "SELECT id, display_name FROM app_users WHERE id = ?",
             (row, index) ->
                 new Profile(
                     row.getObject("id", UUID.class),
                     row.getString("display_name"),
-                    row.getBoolean("site_owner"),
+                    false,
+                    List.of(),
                     List.of()),
             id);
     if (profiles.isEmpty()) throw new AuthException(HttpStatus.UNAUTHORIZED, "UNAUTHENTICATED");
     var profile = profiles.getFirst();
+    var assignedRoles = roles.roles(id);
     return new Profile(
         profile.id(),
         profile.displayName(),
-        profile.siteOwner(),
+        assignedRoles.contains(GlobalRoleService.Role.ADMIN),
         database.queryForList(
             "SELECT provider FROM external_identities WHERE user_id = ? ORDER BY provider",
             String.class,
-            id));
+            id),
+        assignedRoles);
   }
 
   @Transactional
   public Profile findOrCreate(String provider, String subject, String email) {
     lockIdentity(provider, subject);
     UUID existing = identityOwner(provider, subject);
-    if (existing != null) return profile(existing);
+    if (existing != null) {
+      competitions.enrollAllTime(existing);
+      return profile(existing);
+    }
     UUID id = UUID.randomUUID();
     database.update(
         "INSERT INTO app_users (id, display_name) VALUES (?, ?)",
         id,
         "Hot-dog fan " + id.toString().substring(0, 8));
     insertIdentity(id, provider, subject, email);
+    competitions.enrollAllTime(id);
     return profile(id);
   }
 

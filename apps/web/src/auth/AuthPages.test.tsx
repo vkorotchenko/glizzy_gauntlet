@@ -74,11 +74,14 @@ describe('account screens', () => {
     )
 
     expect(
-      await navigation.findByRole('link', { name: 'My meals' }),
+      await navigation.findByRole('link', { name: 'My account' }),
     ).toBeInTheDocument()
     expect(
-      navigation.getByRole('link', { name: 'My account' }),
-    ).toBeInTheDocument()
+      navigation.queryByRole('link', { name: 'My meals' }),
+    ).not.toBeInTheDocument()
+    expect(
+      await screen.findByRole('navigation', { name: 'Account navigation' }),
+    ).toBeVisible()
     expect(
       navigation.queryByRole('link', { name: 'Sign in' }),
     ).not.toBeInTheDocument()
@@ -114,7 +117,7 @@ describe('account screens', () => {
       screen.getByRole('navigation', { name: 'Main navigation' }),
     )
     expect(
-      await navigation.findByRole('link', { name: 'My meals' }),
+      await navigation.findByRole('link', { name: 'My account' }),
     ).toBeInTheDocument()
 
     fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
@@ -129,7 +132,113 @@ describe('account screens', () => {
       navigation.queryByRole('link', { name: 'My account' }),
     ).not.toBeInTheDocument()
     expect(cache.getQueryData(['meals'])).toBeUndefined()
+    expect(
+      screen.queryByRole('navigation', { name: 'Account navigation' }),
+    ).not.toBeInTheDocument()
   })
+
+  it('keeps account tabs available while navigating personal venues, competitions, and meals', async () => {
+    const fetch = vi.fn(async (request: Request) => {
+      if (request.url.endsWith('/auth/session'))
+        return Response.json({
+          ...session,
+          user: {
+            id: 'test-user',
+            displayName: 'Diner',
+            providers: ['email'],
+            siteOwner: false,
+          },
+        })
+      if (request.url.includes('/meals?'))
+        return Response.json({
+          items: [
+            {
+              id: 'private-meal',
+              revision: {
+                items: [],
+                totalHundredths: 0,
+                wholeHotDogs: 2,
+                location: 'My kitchen',
+              },
+              submissions: [],
+            },
+          ],
+          hasMore: false,
+        })
+      if (
+        request.url.includes('/contributions?') ||
+        request.url.includes('/competitions?')
+      )
+        return Response.json({ items: [], hasMore: false })
+      throw new Error(`Unexpected account request: ${request.url}`)
+    })
+    vi.stubGlobal('fetch', fetch)
+    show('/account')
+    const tabs = within(
+      await screen.findByRole('navigation', { name: 'Account navigation' }),
+    )
+    expect(
+      tabs.getByRole('link', { name: 'Profile settings' }),
+    ).toHaveAttribute('aria-current', 'page')
+    for (const [tab, heading, action] of [
+      ['My venues', 'My venues', 'Suggest a venue'],
+      ['My competitions', 'My competitions', 'Create a competition'],
+      ['My feed', 'My meals', 'Log a meal'],
+    ]) {
+      fireEvent.click(tabs.getByRole('link', { name: tab }))
+      const title = await screen.findByRole('heading', {
+        name: heading,
+        level: 1,
+      })
+      expect(title).toBeVisible()
+      expect(
+        within(title.parentElement!).getByRole('link', { name: action }),
+      ).toBeVisible()
+      expect(tabs.getByRole('link', { name: tab })).toHaveAttribute(
+        'aria-current',
+        'page',
+      )
+      expect(
+        tabs.getByRole('link', { name: 'Profile settings' }),
+      ).not.toHaveAttribute('aria-current')
+    }
+    expect(await screen.findByText('My kitchen')).toBeVisible()
+    expect(
+      within(
+        screen.getByRole('navigation', { name: 'Main navigation' }),
+      ).getByRole('link', { name: 'My account' }),
+    ).toHaveAttribute('aria-current', 'page')
+    fireEvent.click(tabs.getByRole('link', { name: 'Profile settings' }))
+    expect(await screen.findByLabelText('Display name')).toHaveValue('Diner')
+    expect(
+      within(screen.getByLabelText('Display name').parentElement!).getByRole(
+        'button',
+        { name: 'Save display name' },
+      ),
+    ).toBeVisible()
+    expect(
+      tabs.getByRole('link', { name: 'Profile settings' }),
+    ).toHaveAttribute('aria-current', 'page')
+  })
+
+  it.each(['/meals', '/account/meals'])(
+    'keeps the personal feed at %s private for visitors',
+    async (path) => {
+      const fetch = vi.fn(async (request: Request) => {
+        expect(request.url).toMatch(/\/auth\/session$/)
+        return Response.json(session)
+      })
+      vi.stubGlobal('fetch', fetch)
+      show(path)
+      expect(
+        await screen.findByRole('heading', { name: 'Sign in to continue' }),
+      ).toBeVisible()
+      expect(
+        screen.queryByRole('navigation', { name: 'Account navigation' }),
+      ).not.toBeInTheDocument()
+      expect(fetch).toHaveBeenCalledOnce()
+    },
+  )
 
   it('sends an email request with the session CSRF token and reports a generic outcome', async () => {
     const fetch = vi.fn(async (request: Request) => {

@@ -13,6 +13,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -55,12 +56,28 @@ public class MealService {
       @NotNull @Min(0) @Max(9999) Integer partialHundredths) {}
 
   public record Content(
-      @NotNull Instant eatenAt,
+      Instant eatenAt,
       UUID venueId,
-      @NotNull @Size(max = 300) String location,
+      @Size(max = 300) String location,
       @NotNull @Size(max = 2000) String notes,
-      @NotNull @Size(min = 1, max = 20) List<@NotNull @Valid Item> items,
-      @NotNull @Size(max = 5) List<@NotNull UUID> photoIds) {}
+      @NotNull @Size(max = 20) List<@NotNull @Valid Item> items,
+      @NotNull @Size(max = 5) List<@NotNull UUID> photoIds,
+      @Min(0) @Max(20199980) Long totalHundredths,
+      @Min(0) @Max(2000) Integer wholeHotDogs) {
+    public Content {
+      if (location == null) location = "";
+    }
+
+    public Content(
+        Instant eatenAt,
+        UUID venueId,
+        String location,
+        String notes,
+        List<Item> items,
+        List<UUID> photoIds) {
+      this(eatenAt, venueId, location, notes, items, photoIds, null, null);
+    }
+  }
 
   public record Save(
       @NotNull UUID requestId,
@@ -186,19 +203,36 @@ public class MealService {
               meal));
     lockCompetitions(affected);
     Instant now = now();
-    if (content.eatenAt().isAfter(now)
-        || content.eatenAt().getNano() % 1_000_000 != 0
-        || content.eatenAt().isBefore(Instant.EPOCH)) throw bad("INVALID_EATEN_AT");
+    Instant eatenAt =
+        content.eatenAt() == null ? now.truncatedTo(ChronoUnit.MILLIS) : content.eatenAt();
+    if (eatenAt.isAfter(now)
+        || eatenAt.getNano() % 1_000_000 != 0
+        || eatenAt.isBefore(Instant.EPOCH)) throw bad("INVALID_EATEN_AT");
+    long total = content.items().isEmpty() ? content.totalHundredths() : 0;
+    int whole = content.items().isEmpty() ? content.wholeHotDogs() : 0;
+    for (var item : content.items()) {
+      total =
+          Math.addExact(
+              total,
+              (long) item.wholeQuantity() * item.unitHundredths() + item.partialHundredths());
+      whole = Math.addExact(whole, item.wholeQuantity());
+    }
     var targetCompetitions = new HashMap<UUID, CompetitionService.Competition>();
     for (UUID target : targets) {
       var competition = writable(target, user, now);
-      if (content.eatenAt().isBefore(competition.startsAt())
-          || !content.eatenAt().isBefore(competition.endsAt()))
+      if (eatenAt.isBefore(competition.startsAt())
+          || (competition.endsAt() != null && !eatenAt.isBefore(competition.endsAt())))
         throw new MealException(HttpStatus.BAD_REQUEST, "OUTSIDE_EATING_WINDOW", target);
+      if (competition.trackingMode() == CompetitionService.TrackingMode.COUNT
+          ? whole == 0
+          : total == 0)
+        throw new MealException(HttpStatus.BAD_REQUEST, "MEASUREMENT_REQUIRED", target);
       targetCompetitions.put(target, competition);
     }
-    if (affected.size() > 1)
-      for (UUID target : affected) {
+    var sharingTargets = new HashSet<>(affected);
+    sharingTargets.remove(CompetitionService.ALL_TIME_ID);
+    if (sharingTargets.size() > 1)
+      for (UUID target : sharingTargets) {
         if (!Boolean.TRUE.equals(
             database.queryForObject(
                 "SELECT allow_shared_meals FROM competitions WHERE id = ?", Boolean.class, target)))
@@ -219,7 +253,6 @@ public class MealService {
         }
       }
     } else {
-      if (content.location().isBlank()) throw bad("LOCATION_REQUIRED");
       location = content.location().strip();
     }
     if (current == null)
@@ -227,16 +260,6 @@ public class MealService {
     attachPhotos(meal, user, content.photoIds());
     long version = current == null ? 1 : current.version() + 1;
     UUID revision = UUID.randomUUID();
-    long total = 0;
-    int whole = 0;
-    for (var item : content.items()) {
-      total =
-          Math.addExact(
-              total,
-              Math.addExact(
-                  (long) item.wholeQuantity() * item.unitHundredths(), item.partialHundredths()));
-      whole = Math.addExact(whole, item.wholeQuantity());
-    }
     database.update(
         """
         INSERT INTO meal_revisions (id, meal_id, version, eaten_at, venue_id, location, notes, total_hundredths, whole_hot_dogs)
@@ -245,7 +268,7 @@ public class MealService {
         revision,
         meal,
         version,
-        sql(content.eatenAt()),
+        sql(eatenAt),
         content.venueId(),
         location,
         content.notes().strip(),
@@ -585,16 +608,28 @@ public class MealService {
       throw new MealException(HttpStatus.FORBIDDEN, "TARGET_UNAVAILABLE", id);
     if (competition.phase() == CompetitionService.Phase.FINALIZED
         || competition.phase() == CompetitionService.Phase.REVISED
-        || !now.isBefore(competition.submissionClosesAt()))
+        || (competition.submissionClosesAt() != null
+            && !now.isBefore(competition.submissionClosesAt())))
       throw new MealException(HttpStatus.CONFLICT, "SUBMISSIONS_CLOSED", id);
     return competition;
   }
 
   private void validate(Content content) {
-    if (content.items().isEmpty()
-        || content.items().size() > 20
+    if (content.items().size() > 20
         || content.photoIds().size() > 5
         || new HashSet<>(content.photoIds()).size() != content.photoIds().size()) throw invalid();
+    if (content.items().isEmpty()) {
+      if (content.totalHundredths() == null
+          || content.wholeHotDogs() == null
+          || content.totalHundredths() < 0
+          || content.totalHundredths() > 20199980
+          || content.wholeHotDogs() < 0
+          || content.wholeHotDogs() > 2000
+          || (content.totalHundredths() == 0 && content.wholeHotDogs() == 0))
+        throw bad("INVALID_MEASUREMENT");
+    } else if (content.totalHundredths() != null || content.wholeHotDogs() != null) {
+      throw bad("INVALID_MEASUREMENT");
+    }
     for (var item : content.items()) {
       if (item.name().isBlank()
           || item.wholeQuantity() < 0
@@ -615,7 +650,7 @@ public class MealService {
         SELECT e.*, COALESCE(e.adjusted_total_hundredths, r.total_hundredths) AS total_hundredths,
           COALESCE(e.adjusted_whole_hot_dogs, r.whole_hot_dogs) AS whole_hot_dogs,
           (m.status = 'ACTIVE' AND c.published_at IS NOT NULL AND c.current_result_version IS NULL
-            AND clock_timestamp() < c.ends_at + interval '24 hours') AS writable
+            AND (c.all_time OR clock_timestamp() < c.ends_at + interval '24 hours')) AS writable
         FROM competition_entries e JOIN meal_revisions r ON r.id = e.revision_id
         JOIN competitions c ON c.id = e.competition_id
         LEFT JOIN competition_memberships m ON m.competition_id = c.id AND m.user_id = ?

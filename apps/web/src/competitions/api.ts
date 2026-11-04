@@ -3,6 +3,7 @@ import { loadSession } from '../auth/api'
 
 export type Competition = components['schemas']['Competition']
 export type Settings = components['schemas']['CompetitionSettings']
+export type TrackingMode = Competition['trackingMode']
 export type Member = components['schemas']['CompetitionMember']
 const client = () =>
   createApiClient(new URL('/api/v1', window.location.origin).href)
@@ -34,6 +35,9 @@ const messages: Record<string, string> = {
   MEMBERSHIP_EXCLUDED:
     'The organizer has excluded this account from participating.',
   CANNOT_EXCLUDE_ORGANIZER: 'The organizer cannot be excluded.',
+  EMAIL_DISABLED:
+    'Email delivery is unavailable. Leave the invitation list blank or configure email first.',
+  INVALID_INVITATION_EMAILS: 'Enter up to 20 valid email addresses.',
 }
 
 function check(reply: { response: Response; error?: { error: string } }) {
@@ -55,7 +59,7 @@ function data<T>(reply: {
 }
 
 export async function listCompetitions(
-  scope: 'public' | 'mine',
+  scope: 'public' | 'mine' | 'joined' | 'administered' | 'participating',
   page: number,
   signal?: AbortSignal,
 ) {
@@ -67,6 +71,20 @@ export async function listCompetitions(
   )
 }
 
+export async function loggingCompetitions(signal?: AbortSignal) {
+  const competitions: Competition[] = []
+  for (let page = 0; page <= 1000; page++) {
+    const result = await listCompetitions('mine', page, signal)
+    competitions.push(
+      ...result.items.filter(
+        (item) => item.published && ['ACTIVE', 'GRACE'].includes(item.phase),
+      ),
+    )
+    if (!result.hasMore) return competitions
+  }
+  throw new Error('Too many joined competitions to load safely.')
+}
+
 export async function getCompetition(id: string, signal?: AbortSignal) {
   return data(
     await client().GET('/competitions/{id}', {
@@ -76,11 +94,39 @@ export async function getCompetition(id: string, signal?: AbortSignal) {
   )
 }
 
-export async function createCompetition(settings: Settings) {
+export async function createCompetition(
+  settings: Settings,
+  invitationEmails: string[] = [],
+) {
   return data(
     await client().POST('/competitions', {
       params: { header: await csrf() },
-      body: settings,
+      body: { ...settings, invitationEmails },
+    }),
+  )
+}
+
+export async function listInvitationEmails(id: string, signal?: AbortSignal) {
+  return data(
+    await client().GET('/competitions/{id}/invitation-emails', {
+      params: { path: { id } },
+      signal,
+    }),
+  )
+}
+
+export async function sendInvitationEmails(id: string) {
+  return data(
+    await client().POST('/competitions/{id}/invitation-emails', {
+      params: { path: { id }, header: await csrf() },
+    }),
+  )
+}
+
+export async function leaveCompetition(id: string) {
+  return data(
+    await client().POST('/competitions/{id}/leave', {
+      params: { path: { id }, header: await csrf() },
     }),
   )
 }

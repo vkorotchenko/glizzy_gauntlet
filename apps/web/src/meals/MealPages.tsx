@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Temporal } from '@js-temporal/polyfill'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { loadSession } from '../auth/api'
-import { listCompetitions } from '../competitions/api'
+import { PageHeading } from '../PageHeading'
+import { loggingCompetitions, type Competition } from '../competitions/api'
 import {
   formatTime,
   fromInstant,
@@ -60,20 +61,32 @@ function Pager({
   )
 }
 
-export function MealSummary({ revision }: { revision: api.Revision }) {
+export function MealSummary({
+  revision,
+  showTotals = true,
+}: {
+  revision: api.Revision
+  showTotals?: boolean
+}) {
   return (
     <div className="meal-summary">
-      <p className="meal-totals">
-        <strong>{formatInches(revision.totalHundredths)} inches</strong> /{' '}
-        {revision.wholeHotDogs} whole hot dogs
-      </p>
+      {showTotals && (
+        <p className="meal-totals">
+          {revision.totalHundredths > 0 && (
+            <strong>{formatInches(revision.totalHundredths)} inches</strong>
+          )}
+          {revision.totalHundredths > 0 && revision.wholeHotDogs > 0 && ' / '}
+          {revision.wholeHotDogs > 0 &&
+            `${revision.wholeHotDogs} whole hot dogs`}
+        </p>
+      )}
       <p>
         {new Intl.DateTimeFormat(undefined, {
           dateStyle: 'medium',
           timeStyle: 'short',
           hourCycle: 'h23',
         }).format(new Date(revision.eatenAt))}{' '}
-        / {revision.location}
+        {revision.location && ` / ${revision.location}`}
       </p>
       <ul className="member-list">
         {revision.items.map((item, index) => (
@@ -113,16 +126,7 @@ export function MealsPage() {
   return (
     <section className="competition-page">
       <span className="eyebrow">Your own record</span>
-      <h1>My meals</h1>
-      <p>
-        Source records stay private. Only explicitly selected competition
-        snapshots are shared with members. A meal shared with several
-        competitions appears here only once.
-      </p>
-      <div className="competition-actions">
-        <Link className="button" to="/meals/new">
-          Log a meal
-        </Link>
+      <PageHeading title="My meals">
         <button
           className="text-button"
           aria-pressed={archived}
@@ -133,7 +137,15 @@ export function MealsPage() {
         >
           {archived ? 'Show current meals' : 'Show archived sources'}
         </button>
-      </div>
+        <Link className="button" to="/meals/new">
+          Log a meal
+        </Link>
+      </PageHeading>
+      <p>
+        Source records stay private. Only explicitly selected competition
+        snapshots are shared with members. A meal shared with several
+        competitions appears here only once.
+      </p>
       <ErrorNotice error={session.error} />
       {session.isPending ? (
         <p role="status">Loading account...</p>
@@ -163,7 +175,7 @@ export function MealsPage() {
                   <article className="competition-card" key={meal.id}>
                     <h2>
                       <Link to={`/meals/${meal.id}`}>
-                        {meal.revision.items[0].name}
+                        {meal.revision.items[0]?.name ?? 'Hot dogs'}
                       </Link>
                     </h2>
                     <p>
@@ -197,19 +209,14 @@ export function MealsPage() {
 function Targets({
   selected,
   change,
+  competitions,
 }: {
   selected: string[]
   change: (ids: string[]) => void
+  competitions: Competition[]
 }) {
   const [page, setPage] = useState(0)
-  const list = useQuery({
-    queryKey: ['competitions', 'list', 'mine', page],
-    queryFn: ({ signal }) => listCompetitions('mine', page, signal),
-  })
-  const eligible =
-    list.data?.items.filter(
-      (item) => item.published && ['ACTIVE', 'GRACE'].includes(item.phase),
-    ) ?? []
+  const eligible = competitions.slice(page * 20, (page + 1) * 20)
   return (
     <section className="competition-section">
       <h2>Submit to competitions</h2>
@@ -220,16 +227,13 @@ function Targets({
         checkmark here.
       </p>
       <p>
-        All affected competitions must permit meal sharing. Written eligibility
+        All affected limited-time competitions must permit meal sharing. The
+        all-time leaderboard can also receive the meal. Written eligibility
         rules still apply. The server checks dates and submission deadlines when
         saving.
       </p>
       <p role="status">{selected.length} selected</p>
-      {list.isPending && <p role="status">Loading joined competitions...</p>}
-      <ErrorNotice error={list.error} />
-      {!list.isPending && !eligible.length && (
-        <p>No open joined competitions on this page.</p>
-      )}
+      {!eligible.length && <p>No open joined competitions on this page.</p>}
       {eligible.map((item) => (
         <div key={item.id}>
           <label className="checkbox-label">
@@ -262,9 +266,11 @@ function Targets({
           </details>
         </div>
       ))}
-      {list.data && (
-        <Pager page={page} hasMore={list.data.hasMore} change={setPage} />
-      )}
+      <Pager
+        page={page}
+        hasMore={(page + 1) * 20 < competitions.length}
+        change={setPage}
+      />
     </section>
   )
 }
@@ -380,14 +386,6 @@ function PhotoPicker({
   )
 }
 
-type ItemFields = {
-  key: string
-  name: string
-  quantity: string
-  length: string
-  partial: string
-}
-
 function roundMealTime(local: string, zone: string, occurrence: Occurrence) {
   try {
     const entered = Temporal.Instant.from(
@@ -423,13 +421,9 @@ function MealForm({ initial }: { initial?: api.Meal }) {
     Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
   )
   const [initialTime] = useState(() => {
-    const fields = fromInstant(
-      revision?.eatenAt ?? new Date(Date.now()).toISOString(),
-      zone,
-    )
     return revision
-      ? fields
-      : roundMealTime(fields.local, zone, fields.occurrence)
+      ? fromInstant(revision.eatenAt, zone)
+      : { local: '', occurrence: 'reject' as const }
   })
   const [time, setTime] = useState(initialTime.local.slice(0, 16))
   const [timeChanged, setTimeChanged] = useState(false)
@@ -441,26 +435,24 @@ function MealForm({ initial }: { initial?: api.Meal }) {
     revision?.venueId ? '' : (revision?.location ?? ''),
   )
   const [notes, setNotes] = useState(revision?.notes ?? '')
-  const [items, setItems] = useState<ItemFields[]>(
-    revision?.items.map((item) => ({
-      key: crypto.randomUUID(),
-      name: item.name,
-      quantity: String(item.wholeQuantity),
-      length: formatInches(item.unitHundredths),
-      partial: formatInches(item.partialHundredths),
-    })) ?? [
-      {
-        key: crypto.randomUUID(),
-        name: '',
-        quantity: '0',
-        length: '',
-        partial: '',
-      },
-    ],
+  const [count, setCount] = useState(
+    revision ? String(revision.wholeHotDogs) : '',
+  )
+  const [length, setLength] = useState(
+    revision ? formatInches(revision.totalHundredths) : '',
   )
   const [photoIds, setPhotos] = useState(revision?.photoIds ?? [])
   const [uploading, setUploading] = useState(false)
   const [targets, setTargets] = useState<string[]>([])
+  const competitions = useQuery({
+    queryKey: ['competitions', 'logging'],
+    queryFn: ({ signal }) => loggingCompetitions(signal),
+  })
+  const modes = competitions.data?.map((item) => item.trackingMode) ?? []
+  const tracksCount =
+    modes.length === 0 || modes.some((mode) => mode !== 'LENGTH')
+  const tracksLength =
+    modes.length === 0 || modes.some((mode) => mode !== 'COUNT')
   const [venuePage, setVenuePage] = useState(0)
   const venues = useQuery({
     queryKey: ['directory', 'venues', venuePage],
@@ -481,13 +473,23 @@ function MealForm({ initial }: { initial?: api.Meal }) {
   }
   const save = useMutation({
     mutationFn: async () => {
-      let eatenAt = revision?.eatenAt ?? ''
-      if (!revision || timeChanged) {
+      let eatenAt = revision?.eatenAt
+      if (time && (!revision || timeChanged)) {
         const rounded = roundMealTime(time, zone, occurrence)
         setTime(rounded.local.slice(0, 16))
         setOccurrence(rounded.occurrence)
         eatenAt = toInstant(rounded.local, zone, rounded.occurrence)
       }
+      if (timeChanged && !time) eatenAt = undefined
+      const totalHundredths = toHundredths(length || '0', 20199980)
+      const wholeHotDogs = wholeQuantity(count || '0', 2000)
+      if (totalHundredths === 0 && wholeHotDogs === 0)
+        throw new Error('Add a hot dog count or total inches before saving.')
+      const keepItems = Boolean(
+        revision?.items.length &&
+        totalHundredths === revision.totalHundredths &&
+        wholeHotDogs === revision.wholeHotDogs,
+      )
       const body = {
         version: initial?.version ?? 0,
         content: {
@@ -496,12 +498,8 @@ function MealForm({ initial }: { initial?: api.Meal }) {
           location: venueId ? '' : location,
           notes,
           photoIds,
-          items: items.map((item) => ({
-            name: item.name,
-            wholeQuantity: wholeQuantity(item.quantity),
-            unitHundredths: toHundredths(item.length),
-            partialHundredths: toHundredths(item.partial || '0'),
-          })),
+          items: keepItems ? revision!.items : [],
+          ...(keepItems ? {} : { totalHundredths, wholeHotDogs }),
         },
         competitionIds: targets,
       }
@@ -516,15 +514,10 @@ function MealForm({ initial }: { initial?: api.Meal }) {
     onSuccess: async (meal) => {
       cache.setQueryData(['meals', 'detail', meal.id], meal)
       await cache.invalidateQueries({ queryKey: ['meals'] })
+      await cache.invalidateQueries({ queryKey: ['feed'] })
       navigate(`/meals/${meal.id}`)
     },
   })
-  const changeItem = (key: string, field: keyof ItemFields, value: string) =>
-    setItems(
-      items.map((item) =>
-        item.key === key ? { ...item, [field]: value } : item,
-      ),
-    )
   return (
     <form
       className="competition-form"
@@ -534,175 +527,136 @@ function MealForm({ initial }: { initial?: api.Meal }) {
       }}
     >
       <fieldset disabled={save.isPending}>
-        <legend>Meal details</legend>
+        <legend>What you ate</legend>
         <p>
-          Use your actual measurements, not a standard size. The server
-          calculates totals after saving. Eat at your own pace.
+          Add your totals and save. Only the measurements used by your open
+          joined competitions are shown. Eat at your own pace.
         </p>
-        <label htmlFor="meal-time">When you ate</label>
-        <input
-          id="meal-time"
-          type="datetime-local"
-          step="60"
-          aria-describedby="meal-time-hint"
-          required
-          value={time}
-          onChange={(event) => {
-            setTime(event.target.value)
-            setTimeChanged(true)
-          }}
-          onBlur={roundTime}
-        />
-        <p id="meal-time-hint" className="form-note">
-          Uses your device's local time, rounded to the nearest 15 minutes.
-          Rounding never moves a past meal into the future.
-        </p>
-        <h2>What you ate</h2>
-        <p>
-          Use separate lines for different sizes. Each line allows 0-100 whole
-          hot dogs, a full length up to 100 inches, and an additional partial
-          portion smaller than that length. At most two decimal places; no
-          rounding.
-        </p>
-        {items.map((item, index) => (
-          <fieldset key={item.key}>
-            <legend>Item {index + 1}</legend>
-            <label htmlFor={`item-name-${item.key}`}>
-              Item {index + 1} name
-            </label>
+        {competitions.isPending && (
+          <p role="status">Loading joined competitions...</p>
+        )}
+        <ErrorNotice error={competitions.error} />
+        {competitions.isError && (
+          <button
+            type="button"
+            className="text-button"
+            onClick={() => void competitions.refetch()}
+          >
+            Retry joined competitions
+          </button>
+        )}
+        {tracksCount && (
+          <>
+            <label htmlFor="meal-count">How many hot dogs?</label>
             <input
-              id={`item-name-${item.key}`}
-              required
-              maxLength={120}
-              value={item.name}
-              onChange={(event) =>
-                changeItem(item.key, 'name', event.target.value)
-              }
-            />
-            <label htmlFor={`item-quantity-${item.key}`}>
-              Item {index + 1} whole quantity
-            </label>
-            <input
-              id={`item-quantity-${item.key}`}
+              id="meal-count"
               inputMode="numeric"
               pattern="[0-9]+"
               required
-              value={item.quantity}
-              onChange={(event) =>
-                changeItem(item.key, 'quantity', event.target.value)
-              }
-            />
-            <label htmlFor={`item-length-${item.key}`}>
-              Item {index + 1} full length (inches)
-            </label>
-            <input
-              id={`item-length-${item.key}`}
-              inputMode="decimal"
-              required
-              value={item.length}
-              onChange={(event) =>
-                changeItem(item.key, 'length', event.target.value)
-              }
-            />
-            <label htmlFor={`item-partial-${item.key}`}>
-              Item {index + 1} additional partial inches
-            </label>
-            <input
-              id={`item-partial-${item.key}`}
-              inputMode="decimal"
-              value={item.partial}
-              onChange={(event) =>
-                changeItem(item.key, 'partial', event.target.value)
-              }
-            />
-            <button
-              type="button"
-              className="text-button"
-              disabled={items.length === 1}
-              onClick={() =>
-                setItems(items.filter((value) => value.key !== item.key))
-              }
-            >
-              Remove item {index + 1}
-            </button>
-          </fieldset>
-        ))}
-        <button
-          type="button"
-          className="text-button"
-          disabled={items.length >= 20}
-          onClick={() =>
-            setItems([
-              ...items,
-              {
-                key: crypto.randomUUID(),
-                name: '',
-                quantity: '0',
-                length: '',
-                partial: '',
-              },
-            ])
-          }
-        >
-          Add another size
-        </button>
-        <h2>Where</h2>
-        <label htmlFor="meal-venue">Approved venue (optional)</label>
-        <select
-          id="meal-venue"
-          value={venueId}
-          onChange={(event) => setVenue(event.target.value)}
-        >
-          <option value="">Use a private location label</option>
-          {venueId &&
-            !venues.data?.items.some((item) => item.id === venueId) && (
-              <option value={venueId}>
-                {revision?.location ?? 'Selected venue'}
-              </option>
-            )}
-          {venues.data?.items.map((venue) => (
-            <option key={venue.id} value={venue.id}>
-              {venue.name} / {venue.address}
-            </option>
-          ))}
-        </select>
-        <ErrorNotice error={venues.error} />
-        {venues.data && (
-          <Pager
-            page={venuePage}
-            hasMore={venues.data.hasMore}
-            change={setVenuePage}
-          />
-        )}
-        {!venueId && (
-          <>
-            <label htmlFor="meal-location">Private location label</label>
-            <input
-              id="meal-location"
-              maxLength={300}
-              required
-              value={location}
-              onChange={(event) => setLocation(event.target.value)}
+              value={count}
+              onChange={(event) => setCount(event.target.value)}
             />
           </>
         )}
-        <p className="form-note">
-          Private labels stay out of the public directory, but are visible to
-          members of competitions you select.
-        </p>
-        <label htmlFor="meal-notes">Notes</label>
-        <textarea
-          id="meal-notes"
-          maxLength={2000}
-          value={notes}
-          onChange={(event) => setNotes(event.target.value)}
-        />
-        <PhotoPicker
-          selected={photoIds}
-          change={setPhotos}
-          busy={setUploading}
-        />
-        <Targets selected={targets} change={setTargets} />
+        {tracksLength && (
+          <>
+            <label htmlFor="meal-length">Total inches</label>
+            <input
+              id="meal-length"
+              inputMode="decimal"
+              required
+              value={length}
+              onChange={(event) => setLength(event.target.value)}
+            />
+            <p className="form-note">
+              Combined length eaten, not length per hot dog. Use your actual
+              measurement, with up to two decimal places.
+            </p>
+          </>
+        )}
+        <details className="competition-section">
+          <summary>Add photos, location, time, or notes (optional)</summary>
+          <label htmlFor="meal-time">When you ate</label>
+          <input
+            id="meal-time"
+            type="datetime-local"
+            step="60"
+            aria-describedby="meal-time-hint"
+            value={time}
+            onChange={(event) => {
+              setTime(event.target.value)
+              setTimeChanged(true)
+            }}
+            onBlur={roundTime}
+          />
+          <p id="meal-time-hint" className="form-note">
+            Leave blank to use the time you save. Entered times use your
+            device's local time, rounded to the nearest 15 minutes without
+            moving a past meal into the future.
+          </p>
+          <h2>Where</h2>
+          <label htmlFor="meal-venue">Approved venue (optional)</label>
+          <select
+            id="meal-venue"
+            value={venueId}
+            onChange={(event) => setVenue(event.target.value)}
+          >
+            <option value="">No venue / optional private label</option>
+            {venueId &&
+              !venues.data?.items.some((item) => item.id === venueId) && (
+                <option value={venueId}>
+                  {revision?.location ?? 'Selected venue'}
+                </option>
+              )}
+            {venues.data?.items.map((venue) => (
+              <option key={venue.id} value={venue.id}>
+                {venue.name} / {venue.address}
+              </option>
+            ))}
+          </select>
+          <ErrorNotice error={venues.error} />
+          {venues.data && (
+            <Pager
+              page={venuePage}
+              hasMore={venues.data.hasMore}
+              change={setVenuePage}
+            />
+          )}
+          {!venueId && (
+            <>
+              <label htmlFor="meal-location">Private location label</label>
+              <input
+                id="meal-location"
+                maxLength={300}
+                value={location}
+                onChange={(event) => setLocation(event.target.value)}
+              />
+            </>
+          )}
+          <p className="form-note">
+            Private labels stay out of the public directory, but are visible to
+            members of competitions you select.
+          </p>
+          <label htmlFor="meal-notes">Notes</label>
+          <textarea
+            id="meal-notes"
+            maxLength={2000}
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+          />
+          <PhotoPicker
+            selected={photoIds}
+            change={setPhotos}
+            busy={setUploading}
+          />
+        </details>
+        {competitions.data && (
+          <Targets
+            selected={targets}
+            change={setTargets}
+            competitions={competitions.data}
+          />
+        )}
         {initial && (
           <p className="form-notice">
             This creates a new source revision. Closed and unselected
@@ -710,7 +664,10 @@ function MealForm({ initial }: { initial?: api.Meal }) {
             separate actions on the meal detail page.
           </p>
         )}
-        <button className="button" disabled={save.isPending || uploading}>
+        <button
+          className="button"
+          disabled={save.isPending || uploading || !competitions.isSuccess}
+        >
           Save meal and selected submissions
         </button>
         <ErrorNotice error={save.error} />
@@ -730,8 +687,8 @@ export function MealEditorPage() {
   })
   return (
     <section className="competition-page">
-      <Link to="/meals">My meals</Link>
-      <h1>{id ? 'Edit meal and submissions' : 'Log a meal'}</h1>
+      <Link to="/account/meals">My meals</Link>
+      <PageHeading title={id ? 'Edit meal and submissions' : 'Log a meal'} />
       <ErrorNotice error={session.error} />
       {session.isPending ? (
         <p role="status">Loading account...</p>
@@ -829,8 +786,14 @@ export function MealPage() {
   const meal = detail.data
   return (
     <section className="competition-page">
-      <Link to="/meals">My meals</Link>
-      <h1>Meal record</h1>
+      <Link to="/account/meals">My meals</Link>
+      <PageHeading title="Meal record">
+        {session.data?.user && meal && !detail.isError && !meal.archived && (
+          <Link className="button secondary" to={`/meals/${id}/edit`}>
+            Edit meal or select submissions
+          </Link>
+        )}
+      </PageHeading>
       <ErrorNotice error={session.error} />
       {!session.data?.user ? (
         <p>
@@ -847,11 +810,6 @@ export function MealPage() {
                 {meal.archived ? ' / Archived' : ''}
               </p>
               <MealSummary revision={meal.revision} />
-              {!meal.archived && (
-                <Link className="button secondary" to={`/meals/${id}/edit`}>
-                  Edit meal or select submissions
-                </Link>
-              )}
               <section className="competition-section">
                 <h2>Competition snapshots</h2>
                 <p>
@@ -934,15 +892,16 @@ export function CompetitionMeals({ id }: { id: string }) {
     queryFn: ({ signal }) => api.listEntries(id, page, signal),
   })
   return (
-    <section className="competition-section">
-      <h2>Member meal activity</h2>
+    <section className="competition-section" aria-label="Member meal activity">
+      <PageHeading title="Member meal activity" level={2}>
+        <Link className="button secondary" to="/meals/new">
+          Log a meal
+        </Link>
+      </PageHeading>
       <p>
         Submitted snapshots only. Source edits and other competitions remain
         private.
       </p>
-      <Link className="button secondary" to="/meals/new">
-        Log a meal
-      </Link>
       {list.isPending && <p role="status">Loading submitted meals...</p>}
       <ErrorNotice error={list.error} />
       {list.data && (

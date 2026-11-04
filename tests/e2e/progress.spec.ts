@@ -353,6 +353,9 @@ test('shows tied standings, private snapshot progress, and finalized scores with
     await page.getByRole('link', { name: 'Back to competition' }).click()
     await expect(page.getByText('Final results / Public')).toBeVisible()
     await expect(
+      page.getByRole('region', { name: 'Competition standings', exact: true }),
+    ).toHaveCount(1)
+    await expect(
       page.getByText(
         'Final standings from the latest final or revised recap. Earlier result revisions remain available.',
       ),

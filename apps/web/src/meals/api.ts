@@ -12,7 +12,9 @@ const messages: Record<string, string> = {
   NOT_FOUND: 'This meal or photo is unavailable.',
   INVALID_REQUEST: 'Check the fields and use whole hundredths of an inch.',
   INVALID_MEASUREMENT:
-    'Each item needs a length, and a positive whole quantity or partial portion smaller than that length.',
+    'Enter a positive hot dog count or total inches, using at most two decimal places for inches.',
+  MEASUREMENT_REQUIRED:
+    'Add the measurement tracked by each selected competition: hot dog count for count-only, or total inches for length and combined competitions.',
   INVALID_EATEN_AT:
     'Choose a past or current time, with at most millisecond precision.',
   LOCATION_REQUIRED:

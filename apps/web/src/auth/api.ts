@@ -1,4 +1,15 @@
-import { createApiClient } from '@glizzy/api-client'
+import { createApiClient, type components } from '@glizzy/api-client'
+
+export type GlobalRole = components['schemas']['GlobalRole']
+type Profile = components['schemas']['Profile']
+
+export function isAdmin(user: Profile | null | undefined) {
+  return Boolean(user?.roles?.includes('ADMIN'))
+}
+
+export function canReviewVenues(user: Profile | null | undefined) {
+  return isAdmin(user) || Boolean(user?.roles?.includes('VENUE_APPROVER'))
+}
 
 function client() {
   return createApiClient(new URL('/api/v1', window.location.origin).href)
@@ -16,6 +27,11 @@ const messages: Record<string, string> = {
   ALREADY_SIGNED_IN: 'Sign out before using a link for a different account.',
   EMAIL_DISABLED: 'Email sign-in is not configured on this server.',
   GOOGLE_DISABLED: 'Google sign-in is not configured on this server.',
+  ADMIN_ONLY: 'Only admins can manage global roles.',
+  LAST_ADMIN:
+    'Keep at least one Admin. Grant Admin to another account before revoking this role.',
+  INVALID_REQUEST: 'Check the account and role and try again.',
+  NOT_FOUND: 'This account is unavailable.',
 }
 
 function check(response: Response, error?: { error: string }) {
@@ -92,4 +108,31 @@ export async function logout() {
     params: { header: await csrf() },
   })
   check(response)
+}
+
+export async function listRoleAccounts(
+  query: string,
+  page: number,
+  signal?: AbortSignal,
+) {
+  const { data, error, response } = await client().GET('/admin/accounts', {
+    params: { query: { query, page } },
+    signal,
+  })
+  check(response, error)
+  if (!data) throw new Error('Could not load accounts.')
+  return data
+}
+
+export async function changeGlobalRole(
+  id: string,
+  role: GlobalRole,
+  grant: boolean,
+) {
+  const options = { params: { path: { id, role }, header: await csrf() } }
+  const result = grant
+    ? await client().PUT('/admin/accounts/{id}/roles/{role}', options)
+    : await client().DELETE('/admin/accounts/{id}/roles/{role}', options)
+  check(result.response, result.error)
+  return result.data
 }
