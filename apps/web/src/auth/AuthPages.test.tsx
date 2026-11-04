@@ -9,6 +9,7 @@ import {
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import App from '../App'
+import * as auth from './api'
 
 const session = {
   user: null,
@@ -33,6 +34,235 @@ function show(path: string) {
 }
 
 describe('account screens', () => {
+  it('uploads, replaces, and removes profile pictures without discarding an unsaved display name', async () => {
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL() {
+          return 'blob:profile-preview'
+        }
+        static revokeObjectURL() {}
+      },
+    )
+    let profile: auth.Profile = {
+      id: 'test-user',
+      displayName: 'Diner',
+      providers: ['email'],
+      roles: [],
+      siteOwner: false,
+      profilePhotoId: null,
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ ...session, user: profile })),
+    )
+    const upload = vi
+      .spyOn(auth, 'uploadProfilePhoto')
+      .mockImplementation(async (_file, expected) => {
+        profile = {
+          ...profile,
+          profilePhotoId: expected ? 'replacement-photo' : 'first-photo',
+        }
+        return profile
+      })
+    const remove = vi
+      .spyOn(auth, 'removeProfilePhoto')
+      .mockImplementation(async () => {
+        profile = { ...profile, profilePhotoId: null }
+        return profile
+      })
+    show('/account')
+    const name = await screen.findByLabelText('Display name')
+    fireEvent.change(name, { target: { value: 'Unsaved name' } })
+    const chooser = screen.getByLabelText('Choose profile picture')
+    const first = new File(['picture'], 'first.png', { type: 'image/png' })
+    fireEvent.change(chooser, { target: { files: [first] } })
+    expect(
+      screen.getByRole('img', { name: 'Selected profile picture preview' }),
+    ).toHaveAttribute('src', 'blob:profile-preview')
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save profile picture' }),
+    )
+    await waitFor(() => expect(upload).toHaveBeenCalledWith(first, null))
+    const picture = await screen.findByRole('img', {
+      name: "Diner's profile picture",
+    })
+    expect(picture).toHaveAttribute(
+      'src',
+      '/api/v1/profile-photos/first-photo?thumbnail=true',
+    )
+    expect(name).toHaveValue('Unsaved name')
+    const account = within(
+      screen.getByRole('navigation', { name: 'Main navigation' }),
+    ).getByRole('link', { name: 'My account' })
+    expect(account.querySelector('img')).toHaveAttribute(
+      'src',
+      '/api/v1/profile-photos/first-photo?thumbnail=true',
+    )
+    fireEvent.error(picture)
+    expect(picture).not.toBeInTheDocument()
+    expect(
+      within(screen.getByRole('region', { name: 'Profile picture' })).getByText(
+        'D',
+      ),
+    ).toBeVisible()
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Remove profile picture' }),
+      ).toBeEnabled(),
+    )
+    const next = new File(['next'], 'next.png', { type: 'image/png' })
+    fireEvent.change(chooser, { target: { files: [next] } })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save profile picture' }),
+    )
+    await waitFor(() =>
+      expect(upload).toHaveBeenCalledWith(next, 'first-photo'),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('img', { name: "Diner's profile picture" }),
+      ).toHaveAttribute(
+        'src',
+        '/api/v1/profile-photos/replacement-photo?thumbnail=true',
+      ),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Remove profile picture' }),
+      ).toBeEnabled(),
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Remove profile picture' }),
+    )
+    await waitFor(() =>
+      expect(remove).toHaveBeenCalledWith('replacement-photo'),
+    )
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('img', { name: "Diner's profile picture" }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(name).toHaveValue('Unsaved name')
+    expect(account.querySelector('img')).toBeNull()
+  })
+
+  it('rejects invalid pictures and clears a previous selection instead of uploading it', async () => {
+    const revoke = vi.fn()
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL() {
+          return 'blob:profile-preview'
+        }
+        static revokeObjectURL(url: string) {
+          revoke(url)
+        }
+      },
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          ...session,
+          user: {
+            id: 'test-user',
+            displayName: 'Diner',
+            providers: ['email'],
+            roles: [],
+          },
+        }),
+      ),
+    )
+    show('/account')
+    const chooser = await screen.findByLabelText('Choose profile picture')
+    fireEvent.change(chooser, {
+      target: {
+        files: [new File(['svg'], 'picture.svg', { type: 'image/svg+xml' })],
+      },
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Choose a JPEG or PNG image.',
+    )
+    fireEvent.change(chooser, {
+      target: {
+        files: [
+          new File(['x'.repeat(5 * 1024 * 1024 + 1)], 'huge.png', {
+            type: 'image/png',
+          }),
+        ],
+      },
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent('no larger than 5 MiB')
+    const valid = new File(['picture'], 'picture.png', { type: 'image/png' })
+    fireEvent.change(chooser, { target: { files: [valid] } })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Save profile picture' }),
+    ).toBeEnabled()
+    fireEvent.change(chooser, {
+      target: {
+        files: [new File(['svg'], 'picture.svg', { type: 'image/svg+xml' })],
+      },
+    })
+    expect(
+      screen.queryByRole('img', { name: 'Selected profile picture preview' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Save profile picture' }),
+    ).toBeDisabled()
+    expect(revoke).toHaveBeenCalledWith('blob:profile-preview')
+  })
+
+  it('preserves the current picture when a stale upload is rejected', async () => {
+    vi.stubGlobal(
+      'URL',
+      class extends URL {
+        static createObjectURL() {
+          return 'blob:profile-preview'
+        }
+        static revokeObjectURL() {}
+      },
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: Request) => {
+        if (request.method === 'PUT') {
+          expect(request.headers.get('X-CSRF-TOKEN')).toBe('test-csrf-token')
+          return Response.json({ error: 'PHOTO_CONFLICT' }, { status: 409 })
+        }
+        return Response.json({
+          ...session,
+          user: {
+            id: 'test-user',
+            displayName: 'Diner',
+            providers: ['email'],
+            roles: [],
+            profilePhotoId: 'original-photo',
+          },
+        })
+      }),
+    )
+    show('/account')
+    fireEvent.change(await screen.findByLabelText('Choose profile picture'), {
+      target: {
+        files: [new File(['picture'], 'picture.png', { type: 'image/png' })],
+      },
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save profile picture' }),
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Your profile picture changed in another tab.',
+    )
+    expect(
+      screen.getByRole('img', { name: "Diner's profile picture" }),
+    ).toHaveAttribute(
+      'src',
+      '/api/v1/profile-photos/original-photo?thumbnail=true',
+    )
+  })
+
   it('updates the navigation after confirming sign-in without reloading', async () => {
     const profile = {
       id: 'test-user',
@@ -154,8 +384,16 @@ describe('account screens', () => {
           items: [
             {
               id: 'private-meal',
+              version: 1,
+              archived: false,
               revision: {
+                id: 'private-revision',
+                version: 1,
+                eatenAt: '2026-10-28T12:00:00Z',
+                venueId: null,
                 items: [],
+                photoIds: [],
+                notes: '',
                 totalHundredths: 0,
                 wholeHotDogs: 2,
                 location: 'My kitchen',
@@ -202,7 +440,7 @@ describe('account screens', () => {
         tabs.getByRole('link', { name: 'Profile settings' }),
       ).not.toHaveAttribute('aria-current')
     }
-    expect(await screen.findByText('My kitchen')).toBeVisible()
+    expect(await screen.findByText(/My kitchen/)).toBeVisible()
     expect(
       within(
         screen.getByRole('navigation', { name: 'Main navigation' }),

@@ -2,6 +2,7 @@ package com.glizzygauntlet.api.competitions;
 
 import com.glizzygauntlet.api.auth.AuthProperties;
 import com.glizzygauntlet.api.auth.GlobalRoleService;
+import com.glizzygauntlet.api.directory.ImageStore;
 import jakarta.validation.constraints.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -18,10 +19,13 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 public class CompetitionService {
@@ -30,12 +34,20 @@ public class CompetitionService {
   private final JdbcTemplate database;
   private final AuthProperties auth;
   private final GlobalRoleService globalRoles;
+  private final ImageStore images;
+  private final long storageLimit;
 
   public CompetitionService(
-      JdbcTemplate database, AuthProperties auth, GlobalRoleService globalRoles) {
+      JdbcTemplate database,
+      AuthProperties auth,
+      GlobalRoleService globalRoles,
+      ImageStore images,
+      @Value("${app.media.max-bytes:536870912}") long storageLimit) {
     this.database = database;
     this.auth = auth;
     this.globalRoles = globalRoles;
+    this.images = images;
+    this.storageLimit = storageLimit;
   }
 
   public enum Visibility {
@@ -108,7 +120,8 @@ public class CompetitionService {
       Phase phase,
       Role viewerRole,
       boolean canAdminister,
-      long memberCount) {}
+      long memberCount,
+      UUID coverPhotoId) {}
 
   public record Page(List<Competition> items, boolean hasMore) {}
 
@@ -138,7 +151,8 @@ public class CompetitionService {
       Instant publishedAt,
       long version,
       long resultVersion,
-      boolean allTime) {}
+      boolean allTime,
+      UUID coverPhotoId) {}
 
   private record InviteRow(UUID id, UUID competitionId, Instant expiresAt, Instant revokedAt) {}
 
@@ -264,6 +278,14 @@ public class CompetitionService {
   }
 
   @Transactional
+  public Competition create(UUID user, Settings settings, byte[] cover) {
+    var competition = create(user, settings);
+    return cover == null
+        ? competition
+        : uploadCover(competition.id(), user, competition.version(), cover);
+  }
+
+  @Transactional
   public Competition update(UUID id, UUID user, long version, Settings settings) {
     var row = row(id, true);
     requireOrganizer(row, user);
@@ -291,6 +313,75 @@ public class CompetitionService {
         id);
     event(id, user, "SETTINGS_UPDATED", null, null);
     return view(row(id, false), user, now);
+  }
+
+  @Transactional
+  public Competition uploadCover(UUID id, UUID user, long version, byte[] bytes) {
+    var row = row(id, true);
+    requireOrganizer(row, user);
+    checkVersion(row, version);
+    database.queryForList("SELECT pg_advisory_xact_lock(67598231)");
+    if (row.coverPhotoId() == null
+        && database.queryForObject(
+                "SELECT count(*) FROM competitions WHERE organizer_id = ? AND cover_photo_id IS NOT NULL",
+                Long.class,
+                user)
+            >= 200) throw error(HttpStatus.CONFLICT, "PHOTO_LIMIT");
+    var sanitized = images.sanitize(bytes);
+    long size = sanitized.image().length + sanitized.thumbnail().length;
+    long stored =
+        database.queryForObject(
+            """
+            SELECT (SELECT COALESCE(sum(bytes), 0) FROM directory_photos)
+              + (SELECT COALESCE(sum(bytes), 0) FROM meal_photos)
+              + (SELECT COALESCE(sum(cover_photo_bytes), 0) FROM competitions)
+              + (SELECT COALESCE(sum(bytes), 0) FROM profile_photos)
+            """,
+            Long.class);
+    if (stored + size > storageLimit) throw error(HttpStatus.CONFLICT, "STORAGE_LIMIT");
+    UUID photo = UUID.randomUUID();
+    cleanupCover(photo, row.coverPhotoId());
+    images.write(photo, sanitized);
+    database.update(
+        "UPDATE competitions SET cover_photo_id = ?, cover_photo_bytes = ?, version = version + 1 WHERE id = ?",
+        photo,
+        size,
+        id);
+    event(id, user, "COVER_UPDATED", null, null);
+    return view(row(id, false), user, now());
+  }
+
+  @Transactional
+  public Competition removeCover(UUID id, UUID user, long version) {
+    var row = row(id, true);
+    requireOrganizer(row, user);
+    checkVersion(row, version);
+    if (row.coverPhotoId() != null) {
+      database.update(
+          "UPDATE competitions SET cover_photo_id = NULL, cover_photo_bytes = 0, version = version + 1 WHERE id = ?",
+          id);
+      cleanupCover(null, row.coverPhotoId());
+      event(id, user, "COVER_REMOVED", null, null);
+    }
+    return view(row(id, false), user, now());
+  }
+
+  public byte[] cover(UUID id, UUID photo, UUID user, boolean thumbnail) {
+    var row = row(id, false);
+    requireVisible(row, user);
+    if (!photo.equals(row.coverPhotoId())) throw error(HttpStatus.NOT_FOUND, "NOT_FOUND");
+    return images.read(photo, thumbnail);
+  }
+
+  private void cleanupCover(UUID created, UUID previous) {
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCompletion(int status) {
+            UUID discarded = status == STATUS_COMMITTED ? previous : created;
+            if (discarded != null) images.delete(discarded);
+          }
+        });
   }
 
   @Transactional
@@ -593,7 +684,8 @@ public class CompetitionService {
         phase,
         role(row, user),
         canAdminister(row, user),
-        count);
+        count,
+        row.coverPhotoId());
   }
 
   private Row row(UUID id, boolean lock) {
@@ -622,7 +714,8 @@ public class CompetitionService {
         instant(rs, "published_at"),
         rs.getLong("version"),
         rs.getLong("current_result_version"),
-        rs.getBoolean("all_time"));
+        rs.getBoolean("all_time"),
+        rs.getObject("cover_photo_id", UUID.class));
   }
 
   private void validate(Settings s) {

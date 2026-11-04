@@ -1,7 +1,7 @@
 import { createApiClient, type components } from '@glizzy/api-client'
 
 export type GlobalRole = components['schemas']['GlobalRole']
-type Profile = components['schemas']['Profile']
+export type Profile = components['schemas']['Profile']
 
 export function isAdmin(user: Profile | null | undefined) {
   return Boolean(user?.roles?.includes('ADMIN'))
@@ -32,6 +32,12 @@ const messages: Record<string, string> = {
     'Keep at least one Admin. Grant Admin to another account before revoking this role.',
   INVALID_REQUEST: 'Check the account and role and try again.',
   NOT_FOUND: 'This account is unavailable.',
+  PHOTO_CONFLICT:
+    'Your profile picture changed in another tab. Reload before trying again.',
+  INVALID_IMAGE: 'Choose a valid JPEG or PNG image.',
+  IMAGE_TOO_LARGE: 'Choose a JPEG or PNG no larger than 5 MiB.',
+  STORAGE_LIMIT: 'Image storage is full. Please try again later.',
+  MEDIA_UNAVAILABLE: 'Image storage is temporarily unavailable.',
 }
 
 function check(response: Response, error?: { error: string }) {
@@ -101,6 +107,44 @@ export async function renameProfile(displayName: string) {
     body: { displayName },
   })
   check(response, error)
+}
+
+export function profilePhotoUrl(id: string, thumbnail = true) {
+  return `/api/v1/profile-photos/${encodeURIComponent(id)}?thumbnail=${thumbnail}`
+}
+
+export async function uploadProfilePhoto(
+  file: File,
+  expectedPhotoId: string | null,
+) {
+  const { data, error, response } = await client().PUT('/me/photo', {
+    params: { header: await csrf() },
+    body: {
+      file: file.name,
+      ...(expectedPhotoId ? { expectedPhotoId } : {}),
+    },
+    bodySerializer: () => {
+      const body = new FormData()
+      body.append('file', file)
+      if (expectedPhotoId) body.append('expectedPhotoId', expectedPhotoId)
+      return body
+    },
+  })
+  check(response, error)
+  if (!data) throw new Error('Could not update your profile picture.')
+  return data
+}
+
+export async function removeProfilePhoto(expectedPhotoId: string | null) {
+  const { data, error, response } = await client().DELETE('/me/photo', {
+    params: {
+      header: await csrf(),
+      query: expectedPhotoId ? { expectedPhotoId } : {},
+    },
+  })
+  check(response, error)
+  if (!data) throw new Error('Could not remove your profile picture.')
+  return data
 }
 
 export async function logout() {

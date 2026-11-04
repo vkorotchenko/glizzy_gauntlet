@@ -4,8 +4,9 @@ import { PageHeading } from '../PageHeading'
 import { Link } from 'react-router-dom'
 import { loadSession } from '../auth/api'
 import { listCompetitions } from '../competitions/api'
+import { CompetitionCover } from '../competitions/CompetitionCover'
 import { formatTime } from '../competitions/time'
-import { MealSummary } from '../meals/MealPages'
+import { MealFeedCard } from '../meals/MealCard'
 import { formatInches } from '../meals/measurement'
 import * as api from './api'
 
@@ -137,6 +138,7 @@ function SampleFeed() {
 
 function MealCard({ item, userId }: { item: api.FeedItem; userId: string }) {
   const cache = useQueryClient()
+  const ownMeal = item.competitionId === null
   const reaction = useMutation({
     mutationFn: (reacted: boolean) => api.setReaction(item.id, reacted),
     onSuccess: (result) => {
@@ -146,29 +148,57 @@ function MealCard({ item, userId }: { item: api.FeedItem; userId: string }) {
           previous && {
             ...previous,
             items: previous.items.map((entry) =>
-              entry.id === item.id ? { ...entry, ...result } : entry,
+              entry.id === item.id && entry.competitionId === item.competitionId
+                ? { ...entry, ...result }
+                : entry,
             ),
           },
       )
     },
   })
   return (
-    <article
-      className="competition-card meal-feed-card"
-      aria-label={`${item.displayName}'s meal in ${item.competitionName}`}
-    >
-      <header className="feed-card-heading">
-        <span className="feed-avatar" aria-hidden="true">
-          {item.displayName.slice(0, 1).toUpperCase()}
-        </span>
-        <div>
-          <h2>{item.displayName}</h2>
+    <MealFeedCard
+      label={
+        ownMeal
+          ? `${item.displayName}'s meal`
+          : `${item.displayName}'s meal in ${item.competitionName}`
+      }
+      displayName={item.displayName}
+      profilePhotoId={item.profilePhotoId}
+      subtitle={
+        ownMeal ? (
+          <span className="form-note">Your meal</span>
+        ) : (
           <Link to={`/competitions/${item.competitionId}`}>
             {item.competitionName}
           </Link>
-        </div>
-      </header>
-      <MealSummary revision={item.revision} showTotals={false} />
+        )
+      }
+      revision={item.revision}
+      actions={
+        ownMeal ? (
+          <Link className="text-link" to={`/meals/${item.id}`}>
+            View meal
+          </Link>
+        ) : (
+          <div className="feed-card-likes">
+            <span aria-live="polite">
+              {item.reactionCount} {item.reactionCount === 1 ? 'like' : 'likes'}
+            </span>
+            <button
+              type="button"
+              className="like-button"
+              aria-pressed={item.reacted}
+              disabled={reaction.isPending}
+              onClick={() => reaction.mutate(!item.reacted)}
+            >
+              <span aria-hidden="true">&#128077;</span>{' '}
+              {item.reacted ? 'Liked' : 'Like'}
+            </button>
+          </div>
+        )
+      }
+    >
       {item.scoreExcluded ? (
         <p className="form-note">Excluded from this competition's scoring.</p>
       ) : (
@@ -180,45 +210,12 @@ function MealCard({ item, userId }: { item: api.FeedItem; userId: string }) {
           </p>
         )
       )}
-      <footer
-        className="feed-card-actions"
-        role="group"
-        aria-label="Meal totals and likes"
-      >
-        <p className="meal-totals">
-          <strong>
-            {item.revision.wholeHotDogs}{' '}
-            {item.revision.wholeHotDogs === 1 ? 'hot dog' : 'hot dogs'}
-          </strong>
-          {item.revision.totalHundredths > 0 && (
-            <>
-              {' / '}
-              <span>{formatInches(item.revision.totalHundredths)} inches</span>
-            </>
-          )}
-        </p>
-        <div className="feed-card-likes">
-          <span aria-live="polite">
-            {item.reactionCount} {item.reactionCount === 1 ? 'like' : 'likes'}
-          </span>
-          <button
-            type="button"
-            className="like-button"
-            aria-pressed={item.reacted}
-            disabled={reaction.isPending}
-            onClick={() => reaction.mutate(!item.reacted)}
-          >
-            <span aria-hidden="true">&#128077;</span>{' '}
-            {item.reacted ? 'Liked' : 'Like'}
-          </button>
-        </div>
-      </footer>
       {reaction.error && (
         <p role="alert" className="form-error">
           {reaction.error.message}
         </p>
       )}
-    </article>
+    </MealFeedCard>
   )
 }
 
@@ -244,10 +241,10 @@ function CompetitorFeed({ userId }: { userId: string }) {
         </Link>
       </PageHeading>
       <p>
-        Recent meals from competitors across your joined competitions. Like a
-        post to cheer them on; likes never change scores.
+        Your meals and meals from your competitions, newest first. Like a
+        competitor's post to cheer them on; likes never change scores.
       </p>
-      {feed.isPending && <p role="status">Loading your crew's meals...</p>}
+      {feed.isPending && <p role="status">Loading meals...</p>}
       {feed.error && (
         <p role="alert" className="form-error">
           {feed.error.message}
@@ -258,19 +255,20 @@ function CompetitorFeed({ userId }: { userId: string }) {
           {feed.data.items.length === 0 && (
             <div className="competition-card">
               <h2>
-                {page ? 'No older meals.' : 'Your crew is quiet for now.'}
+                {page ? 'No older meals.' : 'Your feed is quiet for now.'}
               </h2>
-              <p>
-                Meals appear here when other members submit them to a
-                competition you have joined.
-              </p>
+              <p>Log a meal or join a competition to see meals here.</p>
               <Link to="/competitions">Find a competition</Link>
             </div>
           )}
           {page === 0 && feed.data.items.length === 0 && <SampleFeed />}
           <div className="meal-feed">
             {feed.data.items.map((item) => (
-              <MealCard key={item.id} item={item} userId={userId} />
+              <MealCard
+                key={`${item.competitionId ?? 'own'}:${item.id}`}
+                item={item}
+                userId={userId}
+              />
             ))}
           </div>
         </>
@@ -293,8 +291,8 @@ function CompetitorFeed({ userId }: { userId: string }) {
         </button>
       </div>
       <p className="form-note">
-        Each card belongs to its named competition. A meal shared with multiple
-        competitions can appear in each, with separate likes.
+        Your meals appear once; other members' meals can appear in each shared
+        competition, with separate likes.
       </p>
     </section>
   )
@@ -347,6 +345,7 @@ function GuestHome() {
       <div className="competition-grid">
         {competitions.data?.items.slice(0, 2).map((competition) => (
           <article className="competition-card" key={competition.id}>
+            <CompetitionCover competition={competition} thumbnail />
             <span className="eyebrow">Public competition</span>
             <h2>
               <Link to={`/competitions/${competition.id}`}>

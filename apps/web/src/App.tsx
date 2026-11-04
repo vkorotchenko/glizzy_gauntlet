@@ -8,6 +8,7 @@ import {
   SignInPage,
 } from './auth/AuthPages'
 import { loadSession } from './auth/api'
+import { UserAvatar } from './auth/UserAvatar'
 import { RoleManagementPage } from './auth/RoleManagementPage'
 import { HomePage } from './feed/FeedPage'
 import {
@@ -79,8 +80,14 @@ export default function App() {
           <NavLink className="account-link" to="/competitions">
             Competitions
           </NavLink>
-          {signedIn ? (
+          {session.data?.user ? (
             <NavLink className="account-link" to="/account">
+              <UserAvatar
+                displayName={session.data.user.displayName}
+                photoId={session.data.user.profilePhotoId}
+                className="header-avatar"
+                decorative
+              />
               My account
             </NavLink>
           ) : (

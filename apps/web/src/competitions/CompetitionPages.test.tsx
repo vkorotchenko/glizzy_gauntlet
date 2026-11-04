@@ -9,6 +9,7 @@ import {
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import App from '../App'
+import * as api from './api'
 import type { Competition } from './api'
 
 const user = {
@@ -56,6 +57,18 @@ function show(path: string) {
         <App />
       </MemoryRouter>
     </QueryClientProvider>,
+  )
+}
+
+function mockCoverPreview() {
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static createObjectURL() {
+        return 'blob:competition-cover-preview'
+      }
+      static revokeObjectURL() {}
+    },
   )
 }
 
@@ -200,6 +213,7 @@ describe('competition screens', () => {
               ...competition,
               id: scope,
               name: scope === 'joined' ? 'Joined crew' : 'Public crew',
+              coverPhotoId: 'public-cover',
             },
           ],
           hasMore: false,
@@ -213,6 +227,12 @@ describe('competition screens', () => {
     expect(
       await screen.findByRole('link', { name: 'Public crew' }),
     ).toBeVisible()
+    expect(
+      screen.getByRole('img', { name: 'Public crew cover photo' }),
+    ).toHaveAttribute(
+      'src',
+      '/api/v1/competitions/public/cover/public-cover?thumbnail=true',
+    )
     const sections = screen.getAllByRole('region', {
       name: /My competitions|Public competitions/,
     })
@@ -279,7 +299,7 @@ describe('competition screens', () => {
       if (request.url.includes('/standings?'))
         return Response.json({ items: [], hasMore: false, provisional: true })
       if (request.url.endsWith(`/competitions/${competition.id}`))
-        return Response.json(competition)
+        return Response.json({ ...competition, coverPhotoId: 'public-cover' })
       throw new Error(
         'Public visitors must not request member or invitation data',
       )
@@ -289,6 +309,13 @@ describe('competition screens', () => {
     expect(
       await screen.findByRole('heading', { name: competition.name }),
     ).toBeVisible()
+    expect(
+      screen.getByRole('img', { name: `${competition.name} cover photo` }),
+    ).toHaveAttribute(
+      'src',
+      `/api/v1/competitions/${competition.id}/cover/public-cover?thumbnail=false`,
+    )
+    expect(screen.queryByText('Manage cover photo')).not.toBeInTheDocument()
     expect(
       screen.queryByRole('heading', { name: 'Members' }),
     ).not.toBeInTheDocument()
@@ -389,6 +416,149 @@ describe('competition screens', () => {
     expect(
       await screen.findByText('Waiting to send', { exact: false }),
     ).toBeVisible()
+  })
+
+  it('creates a draft with a selected cover and lets its organizer replace and remove it', async () => {
+    mockCoverPreview()
+    let current: Competition = {
+      ...competition,
+      phase: 'DRAFT',
+      published: false,
+      viewerRole: 'ORGANIZER',
+      canAdminister: true,
+      coverPhotoId: 'first-cover',
+      version: 1,
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: Request) => {
+        if (request.url.endsWith('/auth/session')) return Response.json(session)
+        if (
+          /\/(invitations|invitation-emails|featured-venues)$/.test(request.url)
+        )
+          return Response.json([])
+        if (request.url.includes('?'))
+          return Response.json({ items: [], hasMore: false })
+        return Response.json(current)
+      }),
+    )
+    const create = vi
+      .spyOn(api, 'createCompetition')
+      .mockImplementation(async () => current)
+    const replace = vi
+      .spyOn(api, 'uploadCompetitionCover')
+      .mockImplementation(async () => {
+        current = { ...current, coverPhotoId: 'replacement', version: 2 }
+        return current
+      })
+    const remove = vi
+      .spyOn(api, 'removeCompetitionCover')
+      .mockImplementation(async () => {
+        current = { ...current, coverPhotoId: null, version: 3 }
+        return current
+      })
+    show('/competitions/new')
+    fireEvent.change(await screen.findByLabelText('Competition name'), {
+      target: { value: competition.name },
+    })
+    fireEvent.change(screen.getByLabelText('Competition time zone'), {
+      target: { value: 'UTC' },
+    })
+    fireEvent.change(screen.getByLabelText('Eating starts'), {
+      target: { value: '2030-07-01T12:00' },
+    })
+    fireEvent.change(screen.getByLabelText('Eating ends'), {
+      target: { value: '2030-07-02T12:00' },
+    })
+    const first = new File(['cover'], 'first.png', { type: 'image/png' })
+    fireEvent.change(screen.getByLabelText('Choose cover photo'), {
+      target: { files: [first] },
+    })
+    expect(
+      screen.getByRole('img', { name: 'Selected cover photo preview' }),
+    ).toHaveAttribute('src', 'blob:competition-cover-preview')
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }))
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ name: competition.name }),
+        [],
+        first,
+      ),
+    )
+    expect(
+      await screen.findByRole('img', {
+        name: `${competition.name} cover photo`,
+      }),
+    ).toHaveAttribute('src', expect.stringContaining('/first-cover?'))
+    fireEvent.click(screen.getByText('Manage cover photo'))
+    const next = new File(['new cover'], 'next.png', { type: 'image/png' })
+    fireEvent.change(screen.getByLabelText('Choose cover photo'), {
+      target: { files: [next] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save cover photo' }))
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith(competition.id, 1, next),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('img', { name: `${competition.name} cover photo` }),
+      ).toHaveAttribute('src', expect.stringContaining('/replacement?')),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Remove cover photo' }),
+      ).toBeEnabled(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Remove cover photo' }))
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(competition.id, 2))
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('img', { name: `${competition.name} cover photo` }),
+      ).not.toBeInTheDocument(),
+    )
+  })
+
+  it('rejects invalid and oversized cover selections and can clear a valid preview', async () => {
+    mockCoverPreview()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(session)),
+    )
+    show('/competitions/new')
+    const chooser = await screen.findByLabelText('Choose cover photo')
+    fireEvent.change(chooser, {
+      target: {
+        files: [new File(['svg'], 'cover.svg', { type: 'image/svg+xml' })],
+      },
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Choose a JPEG or PNG image.',
+    )
+    fireEvent.change(chooser, {
+      target: {
+        files: [
+          new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'huge.png', {
+            type: 'image/png',
+          }),
+        ],
+      },
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent('no larger than 5 MiB')
+    fireEvent.change(chooser, {
+      target: {
+        files: [new File(['png'], 'valid.png', { type: 'image/png' })],
+      },
+    })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('img', { name: 'Selected cover photo preview' }),
+    ).toBeVisible()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Clear selected photo' }),
+    )
+    expect(
+      screen.queryByRole('img', { name: 'Selected cover photo preview' }),
+    ).not.toBeInTheDocument()
   })
 
   it.each([

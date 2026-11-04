@@ -10,8 +10,16 @@ import com.glizzygauntlet.api.auth.SessionAuthentication.AccountPrincipal;
 import com.glizzygauntlet.api.competitions.CompetitionException;
 import com.glizzygauntlet.api.competitions.CompetitionService;
 import com.glizzygauntlet.api.competitions.CompetitionService.*;
+import com.glizzygauntlet.api.directory.DirectoryException;
+import com.glizzygauntlet.api.directory.DirectoryService;
+import com.glizzygauntlet.api.meals.MealException;
 import com.glizzygauntlet.api.meals.MealService;
 import com.glizzygauntlet.api.progress.ProgressService;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -19,18 +27,24 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import javax.imageio.ImageIO;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -41,6 +55,13 @@ import tools.jackson.databind.ObjectMapper;
 @SpringBootTest
 @AutoConfigureMockMvc
 class CompetitionIntegrationTests {
+  @TempDir static Path media;
+
+  @DynamicPropertySource
+  static void properties(DynamicPropertyRegistry registry) {
+    registry.add("app.media.directory", () -> media.toString());
+  }
+
   @Autowired CompetitionService competitions;
   @Autowired AccountService accounts;
   @Autowired JdbcTemplate database;
@@ -50,6 +71,7 @@ class CompetitionIntegrationTests {
   @Autowired MealService meals;
   @Autowired ProgressService progress;
   @Autowired DataSource dataSource;
+  @Autowired DirectoryService directory;
   UUID owner;
   UUID participant;
   UUID outsider;
@@ -62,6 +84,246 @@ class CompetitionIntegrationTests {
         accounts.findOrCreate("email", "participant@example.test", "participant@example.test").id();
     outsider =
         accounts.findOrCreate("email", "outsider@example.test", "outsider@example.test").id();
+  }
+
+  @Test
+  void createsASanitizedCoverAtomicallyAndDisplaysOnlyPublishedPublicCoversToGuests()
+      throws Exception {
+    mvc.perform(
+            multipart("/api/v1/competitions")
+                .file(
+                    new MockMultipartFile(
+                        "competition",
+                        "",
+                        "application/json",
+                        json.writeValueAsBytes(settings(Visibility.PUBLIC))))
+                .file(new MockMultipartFile("file", "cover.png", "image/png", png()))
+                .with(as(owner))
+                .with(csrf()))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.coverPhotoId").isNotEmpty());
+    var draft = competitions.list(owner, "administered", 0).items().getFirst();
+    String url = coverUrl(draft);
+    mvc.perform(get(url)).andExpect(status().isNotFound());
+    mvc.perform(get(url).with(as(outsider))).andExpect(status().isNotFound());
+    var safe =
+        mvc.perform(get(url).with(as(owner)))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType("image/jpeg"))
+            .andExpect(header().string("Cache-Control", "no-store"))
+            .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+            .andReturn()
+            .getResponse()
+            .getContentAsByteArray();
+    assertThat(safe).isNotEqualTo(png());
+    assertThat(ImageIO.read(new ByteArrayInputStream(safe)).getWidth()).isEqualTo(12);
+    competitions.publish(draft.id(), owner, draft.version());
+    mvc.perform(get(url)).andExpect(status().isOk());
+    mvc.perform(get(url).param("thumbnail", "true"))
+        .andExpect(status().isOk())
+        .andExpect(content().contentType("image/jpeg"));
+    mvc.perform(get("/api/v1/competitions"))
+        .andExpect(status().isOk())
+        .andExpect(
+            jsonPath("$.items[?(@.id == '" + draft.id() + "')].coverPhotoId")
+                .value(org.hamcrest.Matchers.contains(draft.coverPhotoId().toString())));
+  }
+
+  @Test
+  void keepsPrivateCoversWithinMembershipAndRestrictsCoverChangesToTheOrganizer() throws Exception {
+    var draft = competitions.create(owner, settings(Visibility.PRIVATE), png());
+    var competition = competitions.publish(draft.id(), owner, draft.version());
+    var invitation = competitions.invite(competition.id(), owner);
+    competitions.joinInvitation(participant, token(invitation));
+    String url = coverUrl(competition);
+    mvc.perform(get(url)).andExpect(status().isNotFound());
+    mvc.perform(get(url).with(as(outsider))).andExpect(status().isNotFound());
+    mvc.perform(get(url).with(as(participant))).andExpect(status().isOk());
+    mvc.perform(
+            multipart(HttpMethod.PUT, "/api/v1/competitions/" + competition.id() + "/cover")
+                .file(new MockMultipartFile("file", "cover.png", "image/png", png()))
+                .param("version", String.valueOf(competition.version()))
+                .with(as(participant))
+                .with(csrf()))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            multipart(HttpMethod.PUT, "/api/v1/competitions/" + competition.id() + "/cover")
+                .file(new MockMultipartFile("file", "cover.png", "image/png", png()))
+                .param("version", String.valueOf(competition.version()))
+                .with(as(owner)))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            delete("/api/v1/competitions/" + competition.id() + "/cover")
+                .param("version", String.valueOf(competition.version()))
+                .with(as(participant))
+                .with(csrf()))
+        .andExpect(status().isForbidden());
+    competitions.exclude(competition.id(), owner, participant, "Test exclusion");
+    mvc.perform(get(url).with(as(participant))).andExpect(status().isNotFound());
+  }
+
+  @Test
+  void replacesAndRemovesCoversAfterSettingsLockWhileRejectingStaleVersions() throws Exception {
+    var draft = competitions.create(owner, settings(Visibility.PUBLIC), png());
+    var published = competitions.publish(draft.id(), owner, draft.version());
+    database.update(
+        "UPDATE competitions SET starts_at = clock_timestamp() - interval '1 hour' WHERE id = ?",
+        published.id());
+    var original = competitions.get(published.id(), owner);
+    mvc.perform(
+            multipart(HttpMethod.PUT, "/api/v1/competitions/" + original.id() + "/cover")
+                .file(new MockMultipartFile("file", "new.png", "image/png", png()))
+                .param("version", String.valueOf(original.version()))
+                .with(as(owner))
+                .with(csrf()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.phase").value("ACTIVE"));
+    var replacement = competitions.get(original.id(), owner);
+    assertThat(replacement.coverPhotoId()).isNotEqualTo(original.coverPhotoId());
+    assertThat(replacement.startsAt()).isEqualTo(original.startsAt());
+    assertThat(Files.exists(media.resolve(original.coverPhotoId() + ".jpg"))).isFalse();
+    assertThat(Files.exists(media.resolve(original.coverPhotoId() + "-thumb.jpg"))).isFalse();
+    mvc.perform(get(coverUrl(original))).andExpect(status().isNotFound());
+    mvc.perform(
+            multipart(HttpMethod.PUT, "/api/v1/competitions/" + original.id() + "/cover")
+                .file(new MockMultipartFile("file", "stale.png", "image/png", png()))
+                .param("version", String.valueOf(original.version()))
+                .with(as(owner))
+                .with(csrf()))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.error").value("VERSION_CONFLICT"));
+    mvc.perform(
+            delete("/api/v1/competitions/" + original.id() + "/cover")
+                .param("version", String.valueOf(original.version()))
+                .with(as(owner))
+                .with(csrf()))
+        .andExpect(status().isConflict());
+    mvc.perform(
+            delete("/api/v1/competitions/" + original.id() + "/cover")
+                .param("version", String.valueOf(replacement.version()))
+                .with(as(owner))
+                .with(csrf()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.coverPhotoId").value(org.hamcrest.Matchers.nullValue()));
+    assertThat(Files.exists(media.resolve(replacement.coverPhotoId() + ".jpg"))).isFalse();
+    assertThat(Files.exists(media.resolve(replacement.coverPhotoId() + "-thumb.jpg"))).isFalse();
+    mvc.perform(get(coverUrl(replacement))).andExpect(status().isNotFound());
+    rejected(
+        HttpStatus.CONFLICT,
+        "SETTINGS_LOCKED",
+        () ->
+            competitions.update(
+                original.id(),
+                owner,
+                competitions.get(original.id(), owner).version(),
+                settings(Visibility.PUBLIC)));
+  }
+
+  @Test
+  void letsGlobalAdminsManageTheAllTimeCoverWithoutChangingLockedSettings() throws Exception {
+    var lifetime = competitions.get(CompetitionService.ALL_TIME_ID, owner);
+    byte[] image = png();
+    rejected(
+        HttpStatus.FORBIDDEN,
+        "ORGANIZER_ONLY",
+        () -> competitions.uploadCover(lifetime.id(), owner, lifetime.version(), image));
+    database.update("INSERT INTO account_roles (user_id, role) VALUES (?, 'ADMIN')", owner);
+    competitions.leave(lifetime.id(), owner);
+    var covered = competitions.uploadCover(lifetime.id(), owner, lifetime.version(), image);
+    assertThat(covered.viewerRole()).isEqualTo(Role.NONE);
+    assertThat(covered.coverPhotoId()).isNotNull();
+    assertThat(covered.trackingMode()).isEqualTo(TrackingMode.COUNT);
+    assertThat(covered.endsAt()).isNull();
+    mvc.perform(get(coverUrl(covered))).andExpect(status().isOk());
+    competitions.removeCover(covered.id(), owner, covered.version());
+    mvc.perform(get(coverUrl(covered))).andExpect(status().isNotFound());
+  }
+
+  @Test
+  void rejectsBadCoverUploadsWithoutLeavingADraftOrChangingAnExistingCover() throws Exception {
+    var settings = settings(Visibility.PUBLIC);
+    mvc.perform(
+            multipart("/api/v1/competitions")
+                .file(
+                    new MockMultipartFile(
+                        "competition", "", "application/json", json.writeValueAsBytes(settings)))
+                .file(
+                    new MockMultipartFile(
+                        "file", "fake.png", "image/png", "not an image".getBytes()))
+                .with(as(owner))
+                .with(csrf()))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error").value("INVALID_IMAGE"));
+    assertThat(competitions.list(owner, "administered", 0).items()).isEmpty();
+    var original = competitions.create(owner, settings, png());
+    mvc.perform(
+            multipart(HttpMethod.PUT, "/api/v1/competitions/" + original.id() + "/cover")
+                .file(
+                    new MockMultipartFile(
+                        "file", "huge.png", "image/png", new byte[5 * 1024 * 1024 + 1]))
+                .param("version", String.valueOf(original.version()))
+                .with(as(owner))
+                .with(csrf()))
+        .andExpect(status().isPayloadTooLarge());
+    assertThat(competitions.get(original.id(), owner).coverPhotoId())
+        .isEqualTo(original.coverPhotoId());
+    mvc.perform(get(coverUrl(original)).with(as(owner))).andExpect(status().isOk());
+  }
+
+  @Test
+  void cleansUpRolledBackCoverWritesButRetainsThePreviousCover() throws Exception {
+    var original = competitions.create(owner, settings(Visibility.PUBLIC), png());
+    byte[] image = png();
+    var rolledBack =
+        new TransactionTemplate(transactions)
+            .execute(
+                status -> {
+                  var changed =
+                      competitions.uploadCover(original.id(), owner, original.version(), image);
+                  status.setRollbackOnly();
+                  return changed;
+                });
+    assertThat(rolledBack).isNotNull();
+    assertThat(Files.exists(media.resolve(rolledBack.coverPhotoId() + ".jpg"))).isFalse();
+    assertThat(Files.exists(media.resolve(rolledBack.coverPhotoId() + "-thumb.jpg"))).isFalse();
+    assertThat(competitions.get(original.id(), owner).coverPhotoId())
+        .isEqualTo(original.coverPhotoId());
+    new TransactionTemplate(transactions)
+        .executeWithoutResult(
+            status -> {
+              competitions.removeCover(original.id(), owner, original.version());
+              status.setRollbackOnly();
+            });
+    mvc.perform(get(coverUrl(original)).with(as(owner))).andExpect(status().isOk());
+  }
+
+  @Test
+  void includesCompetitionCoversInEveryPhotoUploadStorageBudget() throws Exception {
+    var covered = competitions.create(owner, settings(Visibility.PUBLIC), png());
+    database.update(
+        "UPDATE competitions SET cover_photo_bytes = 536870912 WHERE id = ?", covered.id());
+    byte[] image = png();
+    assertThatThrownBy(() -> accounts.uploadProfilePhoto(owner, null, image))
+        .isInstanceOfSatisfying(
+            com.glizzygauntlet.api.auth.AuthException.class,
+            error -> assertThat(error.getMessage()).isEqualTo("STORAGE_LIMIT"));
+    rejected(
+        HttpStatus.CONFLICT,
+        "STORAGE_LIMIT",
+        () -> competitions.uploadCover(covered.id(), owner, covered.version(), image));
+    assertThatThrownBy(() -> meals.upload(owner, image))
+        .isInstanceOfSatisfying(
+            MealException.class,
+            error -> assertThat(error.getMessage()).isEqualTo("STORAGE_LIMIT"));
+    var venue =
+        directory.create(
+            owner,
+            new DirectoryService.Input(
+                null, null, "Test stand", "Public address", "", 0d, 0d, List.of()));
+    assertThatThrownBy(() -> directory.upload(venue.id(), owner, null, image))
+        .isInstanceOfSatisfying(
+            DirectoryException.class,
+            error -> assertThat(error.getMessage()).isEqualTo("STORAGE_LIMIT"));
   }
 
   @Test
@@ -644,6 +906,16 @@ class CompetitionIntegrationTests {
   private Competition published(Visibility visibility) {
     var draft = competitions.create(owner, settings(visibility));
     return competitions.publish(draft.id(), owner, draft.version());
+  }
+
+  private byte[] png() throws Exception {
+    var output = new ByteArrayOutputStream();
+    ImageIO.write(new BufferedImage(12, 4, BufferedImage.TYPE_INT_RGB), "png", output);
+    return output.toByteArray();
+  }
+
+  private String coverUrl(Competition competition) {
+    return "/api/v1/competitions/" + competition.id() + "/cover/" + competition.coverPhotoId();
   }
 
   private Settings settings(Visibility visibility) {

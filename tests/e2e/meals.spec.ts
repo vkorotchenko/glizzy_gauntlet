@@ -57,14 +57,19 @@ async function fillMeal(page: Page, eatenAt = new Date(Date.now() - 3600000)) {
   }, eatenAt.toISOString())
   await expect(page.getByLabel('Eating time zone')).toHaveCount(0)
   await expect(page.getByLabel('Repeated hour')).toHaveCount(0)
-  await page.getByLabel('How many hot dogs?').fill('2')
-  await page.getByLabel('Total inches', { exact: true }).fill('19')
+  await expect(
+    page.getByRole('button', { name: 'Save meal and selected submissions' }),
+  ).toBeEnabled()
   await page
-    .getByText('Add photos, location, time, or notes (optional)', {
-      exact: true,
-    })
-    .click()
-  await page.getByLabel('When you ate').fill(local)
+    .getByRole('checkbox', { name: 'Share with all eligible competitions' })
+    .uncheck()
+  if (!(await page.getByLabel('Inches for hot dog 1').count()))
+    await page.getByLabel('Include inches').check()
+  await page.getByLabel('Inches for hot dog 1').fill('9.5')
+  await page.getByRole('button', { name: 'Duplicate hot dog 1' }).click()
+  await page.getByRole('radio', { name: 'Somewhere else' }).check()
+  await page.getByLabel('Meal date', { exact: true }).fill(local.slice(0, 10))
+  await page.getByLabel('Meal time', { exact: true }).fill(local.slice(11, 16))
   await page.getByLabel('Private location label').fill('Private picnic')
 }
 async function photo(page: Page) {
@@ -72,9 +77,8 @@ async function photo(page: Page) {
     clip: { x: 0, y: 0, width: 16, height: 16 },
   })
   await page
-    .getByLabel('Meal photo file')
+    .getByLabel('Add photos (up to 3)')
     .setInputFiles({ name: 'meal.png', mimeType: 'image/png', buffer })
-  await page.getByRole('button', { name: 'Upload private photo' }).click()
   await expect(
     page.getByRole('checkbox', { name: 'Attach photo 1' }),
   ).toBeChecked()
@@ -112,14 +116,14 @@ test('records exact inches privately, rejects extra precision, and archives with
     ).status(),
   ).toBe(200)
   await fillMeal(page)
-  await page.getByLabel('Total inches', { exact: true }).fill('19.001')
+  await page.getByLabel('Inches for hot dog 1').fill('9.501')
   await page
     .getByRole('button', { name: 'Save meal and selected submissions' })
     .click()
   await expect(page.getByRole('alert')).toContainText(
     'at most two decimal places',
   )
-  await page.getByLabel('Total inches', { exact: true }).fill('19')
+  await page.getByLabel('Inches for hot dog 1').fill('9.5')
   const image = await photo(page)
   const meal = await save(page)
   expect(new Date(meal.revision.eatenAt).getUTCMinutes() % 15).toBe(0)
@@ -154,7 +158,7 @@ test('records exact inches privately, rejects extra precision, and archives with
     await expect(page.getByText('No saved meals here yet.')).toBeVisible()
     await page.getByRole('button', { name: 'Show archived sources' }).click()
     await expect(
-      page.getByRole('link', { name: 'Hot dogs', exact: true }),
+      page.getByRole('link', { name: 'Hotdog', exact: true }),
     ).toBeVisible()
     expect((await page.request.get(image)).status()).toBe(200)
     expect(
@@ -222,23 +226,28 @@ test('logs count-only meals without optional details and unions measurements acr
   }
   const count = await createActive('COUNT')
   await page.goto('/meals/new')
+  await page
+    .getByRole('checkbox', { name: 'Share with all eligible competitions' })
+    .uncheck()
   const target = page.getByRole('checkbox', {
     name: `Submit to ${count.name}`,
     exact: true,
   })
   await expect(target).toBeVisible()
-  await expect(page.getByLabel('Total inches', { exact: true })).toHaveCount(0)
-  await expect(page.getByLabel('When you ate')).toBeHidden()
+  await expect(page.getByLabel('Inches for hot dog 1')).toHaveCount(0)
+  await expect(page.getByLabel('Meal date', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('Meal time', { exact: true })).toBeVisible()
   await expect(page.getByLabel('Private location label')).toBeHidden()
-  await page.getByLabel('How many hot dogs?').fill('3')
+  await page.getByRole('button', { name: 'Add hot dog' }).click()
+  await page.getByRole('button', { name: 'Add hot dog' }).click()
   await target.check()
   const loggedAt = Date.now()
   const meal = await save(page)
   expect(meal.revision.wholeHotDogs).toBe(3)
   expect(meal.revision.totalHundredths).toBe(0)
-  expect(meal.revision.location).toBe('')
+  expect(meal.revision.location).toBe('Home')
   expect(meal.revision.photoIds).toEqual([])
-  expect(meal.revision.items).toEqual([])
+  expect(meal.revision.items).toHaveLength(3)
   expect(Date.parse(meal.revision.eatenAt)).toBeGreaterThanOrEqual(
     loggedAt - 1000,
   )
@@ -255,8 +264,11 @@ test('logs count-only meals without optional details and unions measurements acr
 
   const length = await createActive('LENGTH')
   await page.goto('/meals/new')
-  await page.getByLabel('How many hot dogs?').fill('2')
-  await page.getByLabel('Total inches', { exact: true }).fill('15.5')
+  await page
+    .getByRole('checkbox', { name: 'Share with all eligible competitions' })
+    .uncheck()
+  await page.getByLabel('Inches for hot dog 1').fill('7.75')
+  await page.getByRole('button', { name: 'Duplicate hot dog 1' }).click()
   await page
     .getByRole('checkbox', { name: `Submit to ${count.name}`, exact: true })
     .check()
@@ -418,10 +430,13 @@ test('shares explicit snapshots, preserves a closed competition, and revokes pho
     await page
       .getByRole('link', { name: 'Edit meal or select submissions' })
       .click()
+    await page
+      .getByRole('checkbox', { name: 'Share with all eligible competitions' })
+      .uncheck()
     await expect(
       page.getByRole('checkbox', { name: `Submit to ${a.name}`, exact: true }),
     ).not.toBeChecked()
-    await page.getByLabel('Total inches', { exact: true }).fill('17')
+    await page.getByLabel('Inches for hot dog 1').fill('7.5')
     meal = await save(page)
     expect(meal.revision.totalHundredths).toBe(1700)
     expect(meal.submissions.map((item) => item.totalHundredths)).toEqual([
@@ -430,6 +445,9 @@ test('shares explicit snapshots, preserves a closed competition, and revokes pho
     await page
       .getByRole('link', { name: 'Edit meal or select submissions' })
       .click()
+    await page
+      .getByRole('checkbox', { name: 'Share with all eligible competitions' })
+      .uncheck()
     await page
       .getByRole('checkbox', { name: `Submit to ${a.name}`, exact: true })
       .check()
@@ -452,7 +470,7 @@ test('shares explicit snapshots, preserves a closed competition, and revokes pho
     await member.reload()
     await expect(member.getByText('No submitted meals yet.')).toBeVisible()
     await member.goto('/')
-    await expect(member.getByText('Your crew is quiet for now.')).toBeVisible()
+    await expect(member.getByText('Your feed is quiet for now.')).toBeVisible()
     await expect(
       member.getByRole('region', { name: 'Sample feed' }).getByRole('article'),
     ).toHaveCount(2)

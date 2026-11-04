@@ -228,7 +228,7 @@ public class DirectoryService {
     var sanitized = images.sanitize(bytes);
     long size = sanitized.image().length + sanitized.thumbnail().length;
     if (count(
-                "SELECT (SELECT COALESCE(sum(bytes), 0) FROM directory_photos) + (SELECT COALESCE(sum(bytes), 0) FROM meal_photos)")
+                "SELECT (SELECT COALESCE(sum(bytes), 0) FROM directory_photos) + (SELECT COALESCE(sum(bytes), 0) FROM meal_photos) + (SELECT COALESCE(sum(cover_photo_bytes), 0) FROM competitions) + (SELECT COALESCE(sum(bytes), 0) FROM profile_photos)")
             + size
         > storageLimit) throw error(HttpStatus.CONFLICT, "STORAGE_LIMIT");
     UUID photo = UUID.randomUUID();

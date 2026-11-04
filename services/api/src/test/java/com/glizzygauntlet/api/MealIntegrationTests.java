@@ -110,6 +110,80 @@ class MealIntegrationTests {
   }
 
   @Test
+  void storesCountOnlyRowsAndCondimentsInPrivateHistoryAndSubmittedSnapshots() throws Exception {
+    var competition = active(true, CompetitionService.TrackingMode.COUNT);
+    String body =
+        """
+        {"requestId":"%s","version":0,"competitionIds":["%s"],
+         "content":{"notes":"","items":[{"name":"Ballpark dog","wholeQuantity":1,
+         "unitHundredths":0,"partialHundredths":0,"condiments":["Mustard","Onions"]}],"photoIds":[]}}
+        """
+            .formatted(UUID.randomUUID(), competition.id());
+    mvc.perform(
+            post("/api/v1/meals")
+                .with(as(author))
+                .with(csrf())
+                .contentType("application/json")
+                .content(body))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.revision.totalHundredths").value(0))
+        .andExpect(jsonPath("$.revision.wholeHotDogs").value(1))
+        .andExpect(jsonPath("$.revision.items[0].condiments[0]").value("Mustard"))
+        .andExpect(jsonPath("$.revision.items[0].condiments[1]").value("Onions"));
+    var saved = meals.list(author, false, 0).items().getFirst();
+    var item = saved.revision().items().getFirst();
+    meals.save(
+        saved.id(),
+        author,
+        save(saved.version(), content(List.of(new Item("Private edit", 1, 0, 0))), List.of()));
+    assertThat(meals.history(saved.id(), author, 0).items().get(1).items()).containsExactly(item);
+    assertThat(meals.feed(member, 0).items().getFirst().revision().items()).containsExactly(item);
+    assertThat(meals.get(saved.id(), author).revision().items().getFirst().condiments()).isEmpty();
+    for (var condiments :
+        List.of(List.of("Mustard", "Mustard"), List.of(" "), List.of("x".repeat(41)))) {
+      var invalidContent = content(List.of(new Item("Invalid toppings", 1, 0, 0, condiments)));
+      rejected(
+          "INVALID_REQUEST", () -> meals.save(null, author, save(0, invalidContent, List.of())));
+    }
+    rejected(
+        "INVALID_MEASUREMENT",
+        () ->
+            meals.save(
+                null,
+                author,
+                save(0, content(List.of(new Item("Invalid partial", 1, 0, 1))), List.of())));
+  }
+
+  @Test
+  void permitsThreePhotosButRejectsFourBeforeCreatingAnotherRevision() throws Exception {
+    var encoded = new ByteArrayOutputStream();
+    ImageIO.write(new BufferedImage(10, 10, BufferedImage.TYPE_INT_RGB), "png", encoded);
+    var photos =
+        List.of(
+            meals.upload(author, encoded.toByteArray()),
+            meals.upload(author, encoded.toByteArray()),
+            meals.upload(author, encoded.toByteArray()),
+            meals.upload(author, encoded.toByteArray()));
+    var original = content();
+    var three =
+        new Content(original.eatenAt(), null, "", "", original.items(), photos.subList(0, 3));
+    var saved = meals.save(null, author, save(0, three, List.of()));
+    assertThat(saved.revision().photoIds()).hasSize(3);
+    var four = new Content(original.eatenAt(), null, "", "", original.items(), photos);
+    rejected(
+        "INVALID_REQUEST",
+        () -> meals.save(saved.id(), author, save(saved.version(), four, List.of())));
+    mvc.perform(
+            put("/api/v1/meals/" + saved.id())
+                .with(as(author))
+                .with(csrf())
+                .contentType("application/json")
+                .content(json.writeValueAsString(save(saved.version(), four, List.of()))))
+        .andExpect(status().isBadRequest());
+    assertThat(meals.history(saved.id(), author, 0).items()).hasSize(1);
+  }
+
+  @Test
   void requiresTheTrackedMeasurementForEveryTargetAndRetainsUnionTotals() {
     var countOnly = active(true, CompetitionService.TrackingMode.COUNT);
     var lengthOnly = active(true, CompetitionService.TrackingMode.LENGTH);
@@ -513,7 +587,7 @@ class MealIntegrationTests {
   }
 
   @Test
-  void feedsOnlyCompetitorSnapshotsFromJoinedCompetitionsAndRevokesAccess() {
+  void keepsCompetitorSnapshotsScopedWhileIncludingOwnMeals() {
     var a = active(true);
     var b = active(true);
     var other = active(true);
@@ -531,14 +605,16 @@ class MealIntegrationTests {
     meals.archive(edited.id(), author, new Change(UUID.randomUUID(), edited.version()));
     meals.save(null, author, save(0, content(), List.of()));
     meals.save(null, author, save(0, content(), List.of(other.id())));
-    meals.save(null, member, save(0, content(), List.of(a.id())));
+    var ownMeal = meals.save(null, member, save(0, content(), List.of(a.id())));
     competitions.create(member, settings(true));
 
     var feed = meals.feed(member, 0);
     assertThat(feed.items())
+        .filteredOn(item -> item.competitionId() != null)
         .extracting(FeedItem::competitionId)
         .containsExactlyInAnyOrder(a.id(), b.id());
     assertThat(feed.items())
+        .filteredOn(item -> item.competitionId() != null)
         .allSatisfy(
             item -> {
               assertThat(item.revision().id()).isEqualTo(snapshot);
@@ -546,13 +622,94 @@ class MealIntegrationTests {
               assertThat(item.reacted()).isFalse();
               assertThat(item.reactionCount()).isZero();
             });
+    assertThat(feed.items())
+        .filteredOn(item -> item.competitionId() == null)
+        .singleElement()
+        .satisfies(item -> assertThat(item.id()).isEqualTo(ownMeal.id()));
     assertThat(meals.feed(stranger, 0).items()).isEmpty();
     competitions.exclude(a.id(), author, member, "Membership ended");
     assertThat(meals.feed(member, 0).items())
+        .filteredOn(item -> item.competitionId() != null)
         .extracting(FeedItem::competitionId)
         .containsExactly(b.id());
     meals.withdraw(submitted.id(), b.id(), author, new Change(UUID.randomUUID(), 1L));
-    assertThat(meals.feed(member, 0).items()).isEmpty();
+    assertThat(meals.feed(member, 0).items())
+        .extracting(FeedItem::id)
+        .containsExactly(ownMeal.id());
+  }
+
+  @Test
+  void includesOwnPrivateAndSharedMealsOnceWithoutExposingPrivateRevisionsToOthers()
+      throws Exception {
+    var a = active(true);
+    var b = active(true);
+    var original = content();
+    var shared = meals.save(null, author, save(0, original, List.of(a.id(), b.id())));
+    var privateMeal =
+        meals.save(
+            null,
+            author,
+            save(
+                0,
+                new Content(
+                    original.eatenAt().minusSeconds(60),
+                    null,
+                    "Only me",
+                    "Private lunch",
+                    original.items(),
+                    List.of()),
+                List.of()));
+    assertThat(meals.list(author, false, 0).items())
+        .extracting(Meal::id)
+        .containsExactly(shared.id(), privateMeal.id());
+    var edited =
+        meals.save(
+            shared.id(),
+            author,
+            save(
+                shared.version(),
+                new Content(
+                    original.eatenAt().plusSeconds(60),
+                    null,
+                    "New private location",
+                    "Private edit",
+                    List.of(new Item("Private dog", 1, 900, 0)),
+                    List.of()),
+                List.of()));
+    var ownFeed = meals.feed(author, 0);
+    assertThat(ownFeed.items())
+        .extracting(FeedItem::id)
+        .containsExactly(shared.id(), privateMeal.id());
+    assertThat(ownFeed.items())
+        .allSatisfy(
+            item -> {
+              assertThat(item.competitionId()).isNull();
+              assertThat(item.competitionName()).isNull();
+              assertThat(item.reactionCount()).isZero();
+              assertThat(item.reacted()).isFalse();
+            });
+    assertThat(ownFeed.items().getFirst().revision().id()).isEqualTo(edited.revision().id());
+    assertThat(meals.feed(member, 0).items())
+        .hasSize(2)
+        .allSatisfy(item -> assertThat(item.revision().id()).isEqualTo(shared.revision().id()));
+    rejected("NOT_FOUND", () -> meals.setReaction(shared.id(), author, true));
+
+    competitions.leave(CompetitionService.ALL_TIME_ID, stranger);
+    var outsideMeal = meals.save(null, stranger, save(0, content(), List.of()));
+    assertThat(meals.feed(stranger, 0).items())
+        .extracting(FeedItem::id)
+        .containsExactly(outsideMeal.id());
+    assertThat(meals.feed(author, 0).items())
+        .extracting(FeedItem::id)
+        .doesNotContain(outsideMeal.id());
+    meals.archive(privateMeal.id(), author, new Change(UUID.randomUUID(), privateMeal.version()));
+    assertThat(meals.feed(author, 0).items()).extracting(FeedItem::id).containsExactly(shared.id());
+    mvc.perform(get("/api/v1/feed").with(as(author)))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Cache-Control", "no-store"))
+        .andExpect(jsonPath("$.items[0].id").value(shared.id().toString()))
+        .andExpect(jsonPath("$.items[0].competitionId").value(org.hamcrest.Matchers.nullValue()))
+        .andExpect(jsonPath("$.items[0].revision.id").value(edited.revision().id().toString()));
   }
 
   @Test
@@ -563,13 +720,21 @@ class MealIntegrationTests {
       var content =
           new Content(
               latest.minusSeconds(i), null, "Private place", "", content().items(), List.of());
-      meals.save(null, author, save(0, content, List.of(competition.id())));
+      meals.save(
+          null,
+          i % 2 == 0 ? author : member,
+          save(0, content, i % 2 == 0 ? List.of(competition.id()) : List.of()));
     }
     var first = meals.feed(member, 0);
     var second = meals.feed(member, 1);
     assertThat(first.items()).hasSize(20);
     assertThat(first.hasMore()).isTrue();
     assertThat(first.items().getFirst().revision().eatenAt()).isEqualTo(latest);
+    assertThat(first.items())
+        .extracting(item -> item.revision().eatenAt())
+        .containsExactlyElementsOf(
+            java.util.stream.IntStream.range(0, 20).mapToObj(latest::minusSeconds).toList());
+    assertThat(first.items()).filteredOn(item -> item.competitionId() == null).hasSize(10);
     assertThat(second.items()).hasSize(1);
     assertThat(second.hasMore()).isFalse();
     assertThat(second.items().getFirst().revision().eatenAt()).isEqualTo(latest.minusSeconds(20));
@@ -583,6 +748,7 @@ class MealIntegrationTests {
         .andExpect(jsonPath("$.items.length()").value(20))
         .andExpect(jsonPath("$.items[0].mealId").doesNotExist())
         .andExpect(jsonPath("$.items[0].ownerId").doesNotExist())
+        .andExpect(jsonPath("$.items[1].competitionId").value(org.hamcrest.Matchers.nullValue()))
         .andExpect(jsonPath("$.items[0].revision.location").value("Private place"));
   }
 
@@ -593,7 +759,7 @@ class MealIntegrationTests {
     var meal = meals.save(null, author, save(0, content(), List.of(a.id(), b.id())));
     var entry =
         meals.feed(member, 0).items().stream()
-            .filter(item -> item.competitionId().equals(a.id()))
+            .filter(item -> a.id().equals(item.competitionId()))
             .findFirst()
             .orElseThrow()
             .id();
@@ -603,7 +769,7 @@ class MealIntegrationTests {
     assertThat(two.join()).isEqualTo(new Reaction(1, true));
     assertThat(count("meal_reactions")).isEqualTo(1);
     assertThat(meals.feed(member, 0).items())
-        .filteredOn(item -> item.competitionId().equals(b.id()))
+        .filteredOn(item -> b.id().equals(item.competitionId()))
         .allSatisfy(item -> assertThat(item.reactionCount()).isZero());
     rejected("NOT_FOUND", () -> meals.setReaction(entry, stranger, true));
     rejected("NOT_FOUND", () -> meals.setReaction(entry, author, true));

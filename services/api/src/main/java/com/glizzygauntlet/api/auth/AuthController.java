@@ -1,5 +1,6 @@
 package com.glizzygauntlet.api.auth;
 
+import com.glizzygauntlet.api.directory.DirectoryException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -8,16 +9,22 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.UUID;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -130,6 +137,39 @@ public class AuthController {
     return accounts.rename(requireId(authentication), body.displayName());
   }
 
+  @PutMapping(value = "/me/photo", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  public ResponseEntity<AccountService.Profile> uploadProfilePhoto(
+      @RequestParam MultipartFile file,
+      @RequestParam(required = false) UUID expectedPhotoId,
+      Authentication authentication)
+      throws IOException {
+    UUID user = requireId(authentication);
+    if (file.getSize() > 5 * 1024 * 1024)
+      throw new DirectoryException(HttpStatus.PAYLOAD_TOO_LARGE, "IMAGE_TOO_LARGE");
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(accounts.uploadProfilePhoto(user, expectedPhotoId, file.getBytes()));
+  }
+
+  @DeleteMapping("/me/photo")
+  public ResponseEntity<AccountService.Profile> removeProfilePhoto(
+      @RequestParam(required = false) UUID expectedPhotoId, Authentication authentication) {
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(accounts.removeProfilePhoto(requireId(authentication), expectedPhotoId));
+  }
+
+  @GetMapping(value = "/profile-photos/{id}", produces = MediaType.IMAGE_JPEG_VALUE)
+  public ResponseEntity<byte[]> profilePhoto(
+      @PathVariable UUID id,
+      @RequestParam(defaultValue = "false") boolean thumbnail,
+      Authentication authentication) {
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .header("X-Content-Type-Options", "nosniff")
+        .body(accounts.profilePhoto(id, requireId(authentication), thumbnail));
+  }
+
   @ExceptionHandler(AuthException.class)
   ResponseEntity<ApiError> authError(AuthException error) {
     return ResponseEntity.status(error.status())
@@ -137,7 +177,26 @@ public class AuthController {
         .body(new ApiError(error.getMessage()));
   }
 
-  @ExceptionHandler({MethodArgumentNotValidException.class, HttpMessageNotReadableException.class})
+  @ExceptionHandler(DirectoryException.class)
+  ResponseEntity<ApiError> image(DirectoryException error) {
+    return ResponseEntity.status(error.status())
+        .cacheControl(CacheControl.noStore())
+        .body(new ApiError(error.getMessage()));
+  }
+
+  @ExceptionHandler(MaxUploadSizeExceededException.class)
+  ResponseEntity<ApiError> oversized(Exception error) {
+    return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+        .cacheControl(CacheControl.noStore())
+        .body(new ApiError("IMAGE_TOO_LARGE"));
+  }
+
+  @ExceptionHandler({
+    MethodArgumentNotValidException.class,
+    HttpMessageNotReadableException.class,
+    MethodArgumentTypeMismatchException.class,
+    MissingServletRequestPartException.class
+  })
   ResponseEntity<ApiError> invalidRequest(Exception error) {
     return ResponseEntity.badRequest()
         .cacheControl(CacheControl.noStore())

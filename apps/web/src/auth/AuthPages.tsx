@@ -25,6 +25,7 @@ import {
   canReviewVenues,
 } from './api'
 import { PageHeading } from '../PageHeading'
+import { ProfilePhotoEditor } from './ProfilePhotoEditor'
 
 function useSession() {
   return useQuery({
@@ -332,6 +333,7 @@ export function AccountPage() {
             </p>
           )}
           <ProfileForm key={user.id} displayName={user.displayName} />
+          <ProfilePhotoEditor key={`photo-${user.id}`} user={user} />
           {canReviewVenues(user) && (
             <>
               <h2>Venue moderation</h2>

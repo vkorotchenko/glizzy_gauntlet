@@ -62,12 +62,12 @@ paths:
   /feed:
     get:
       operationId: getCompetitorFeed
-      description: Signed-in active members only. Recent nonwithdrawn competitor submission snapshots across joined published competitions, newest eating time first. Own meals, unsubmitted source changes, and unjoined competitions are never included.
+      description: Signed-in users only. Current own source meals, including private meals, combined with nonwithdrawn competitor submission snapshots across actively joined published competitions, newest eating time first. Own meals appear once regardless of sharing, with null competition metadata. Other members' private sources and unjoined competitions are never included. Archived own sources stay in the archive; archived competitor sources retain their visible submitted snapshots.
       parameters:
         - $ref: '#/components/parameters/Page'
       responses:
         '200':
-          description: Up to 20 competition-scoped meal cards; never publicly cacheable
+          description: Up to 20 chronologically ordered own or competition-scoped meal cards; never publicly cacheable
           content:
             application/json:
               schema:
@@ -754,6 +754,17 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CompetitionCreation'
+          multipart/form-data:
+            schema:
+              type: object
+              required: [competition, file]
+              properties:
+                competition:
+                  $ref: '#/components/schemas/CompetitionCreation'
+                file: { type: string, format: binary }
+            encoding:
+              competition:
+                contentType: application/json
       responses:
         '201':
           $ref: '#/components/responses/Competition'
@@ -791,6 +802,64 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/cover:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    put:
+      operationId: uploadCompetitionCover
+      description: Organizer-only replacement at any competition phase; all-time requires a global Admin. Uses the shared image sanitizer and storage budget. A new draft and its optional multipart cover are created atomically.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [version, file]
+              properties:
+                version: { type: integer, format: int64, minimum: 0 }
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    delete:
+      operationId: removeCompetitionCover
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - name: version
+          in: query
+          required: true
+          schema: { type: integer, format: int64, minimum: 0 }
+      responses:
+        '200':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/cover/{photo}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+      - name: photo
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getCompetitionCover
+      description: Current cover only, with the same visibility as competition metadata. Public published covers are available to guests; private/draft covers require competition access. Replaced and removed covers are unavailable. Always no-store.
+      parameters:
+        - name: thumbnail
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Sanitized JPEG; JPEG/PNG input is limited to 5 MiB, 6000 pixels per side and 12 megapixels, then reencoded without metadata to 1600 pixels plus a 400-pixel thumbnail.
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
         default:
           $ref: '#/components/responses/CompetitionError'
   /competitions/{id}/publish:
@@ -1189,6 +1258,65 @@ paths:
           description: Not signed in
         '403':
           description: Invalid CSRF token
+  /me/photo:
+    put:
+      operationId: uploadProfilePhoto
+      description: Upload or replace your profile picture. JPEG/PNG up to 5 MiB, sanitized before storage. Omit expectedPhotoId only when no picture exists; stale changes are rejected.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                expectedPhotoId: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Updated private profile, never publicly cacheable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        default:
+          $ref: '#/components/responses/AuthError'
+    delete:
+      operationId: removeProfilePhoto
+      description: Remove your current picture. Omit expectedPhotoId only when no picture exists; stale changes are rejected.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+        - name: expectedPhotoId
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Updated private profile, never publicly cacheable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        default:
+          $ref: '#/components/responses/AuthError'
+  /profile-photos/{id}:
+    get:
+      operationId: getProfilePhoto
+      description: Current picture only, visible to its owner or signed-in active members sharing a published competition. Never publicly cacheable. Old pictures and unrelated accounts return not found.
+      parameters:
+        - $ref: '#/components/parameters/CompetitionId'
+        - name: thumbnail
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Sanitized JPEG image
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        default:
+          $ref: '#/components/responses/AuthError'
   /status:
     get:
       operationId: getStatus
@@ -1540,15 +1668,13 @@ components:
         ]
       properties:
         id:
-          {
-            type: string,
-            format: uuid,
-            description: Competition entry ID,
-            not the private source meal ID,
-          }
-        competitionId: { type: string, format: uuid }
-        competitionName: { type: string }
+          type: string
+          format: uuid
+          description: Own source meal ID when competitionId is null; otherwise a competition entry ID, never another member's private source meal ID. Only competition entry IDs accept reactions.
+        competitionId: { type: string, format: uuid, nullable: true }
+        competitionName: { type: string, nullable: true }
         displayName: { type: string }
+        profilePhotoId: { type: string, format: uuid, nullable: true }
         revision:
           $ref: '#/components/schemas/MealRevision'
         scoreExcluded: { type: boolean }
@@ -1572,12 +1698,22 @@ components:
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
         wholeQuantity: { type: integer, minimum: 0, maximum: 100 }
-        unitHundredths: { type: integer, minimum: 1, maximum: 10000 }
+        unitHundredths:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: Length per whole hot dog in hundredths of an inch; zero when length is not recorded.
         partialHundredths:
           type: integer
           minimum: 0
           maximum: 9999
-          description: Less than unitHundredths; each item must have a positive whole quantity or partial length
+          description: Less than unitHundredths, or zero when unitHundredths is zero; each item must have a positive whole quantity or partial length.
+        condiments:
+          type: array
+          maxItems: 12
+          uniqueItems: true
+          description: Optional descriptive toppings; defaults to an empty list when omitted and never affects scoring.
+          items: { type: string, minLength: 1, maxLength: 40 }
     MealContent:
       type: object
       additionalProperties: false
@@ -1601,7 +1737,7 @@ components:
           type: array
           minItems: 0
           maxItems: 20
-          description: Legacy measured item lines. For simple logging send an empty array and explicit totalHundredths and wholeHotDogs instead. Do not mix the two formats.
+          description: Hot dog rows, including optional condiments. Totals are calculated from these items. Older aggregate meals can use an empty array with explicit totalHundredths and wholeHotDogs instead; do not mix the two formats.
           items:
             $ref: '#/components/schemas/MealItem'
         totalHundredths:
@@ -1617,7 +1753,7 @@ components:
           description: Required with empty items; use zero for length-only logging. At least one total must be positive. COUNT targets require a positive count; LENGTH and BOTH targets require positive inches.
         photoIds:
           type: array
-          maxItems: 5
+          maxItems: 3
           uniqueItems: true
           items: { type: string, format: uuid }
     MealSave:
@@ -1970,6 +2106,11 @@ components:
           description: True for the active organizer of an ordinary competition or a global Admin on all-time, including opted-out Admins. Does not grant access to unjoined meal details or other accounts' private competitions.
         memberCount:
           type: integer
+        coverPhotoId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Optional current cover, stored separately from meal and venue photos. Organizers can update or remove it without changing locked scoring settings.
     CompetitionMember:
       type: object
       required: [id, displayName, role, status]
@@ -2078,6 +2219,11 @@ components:
           format: uuid
         displayName:
           type: string
+        profilePhotoId:
+          type: string
+          format: uuid
+          nullable: true
+          readOnly: true
         siteOwner:
           type: boolean
           deprecated: true

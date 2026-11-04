@@ -44,6 +44,12 @@ public class CompetitionEmailService {
   @Transactional
   public CompetitionService.Competition create(
       UUID user, CompetitionService.Settings settings, List<String> addresses) {
+    return create(user, settings, addresses, null);
+  }
+
+  @Transactional
+  public CompetitionService.Competition create(
+      UUID user, CompetitionService.Settings settings, List<String> addresses, byte[] cover) {
     if (addresses == null || addresses.size() > 20) throw invalid();
     var recipients = new LinkedHashSet<String>();
     for (String address : addresses) {
@@ -63,7 +69,7 @@ public class CompetitionEmailService {
     }
     if (!recipients.isEmpty() && !auth.emailEnabled())
       throw new CompetitionException(HttpStatus.SERVICE_UNAVAILABLE, "EMAIL_DISABLED");
-    var competition = competitions.create(user, settings);
+    var competition = competitions.create(user, settings, cover);
     for (String email : recipients)
       database.update(
           "INSERT INTO competition_invitation_emails (id, competition_id, email) VALUES (?, ?, ?)",

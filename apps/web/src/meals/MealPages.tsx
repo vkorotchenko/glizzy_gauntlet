@@ -11,9 +11,14 @@ import {
   toInstant,
   type Occurrence,
 } from '../competitions/time'
-import { listVenues } from '../directory/api'
+import { MealVenuePicker } from './MealVenuePicker'
 import * as api from './api'
 import { formatInches, toHundredths, wholeQuantity } from './measurement'
+import { MealFeedCard, MealSummary } from './MealCard'
+import { HotDogInputs, InfoPopup } from './MealInputs'
+import { newHotDog, rowItems, type HotDogRow } from './mealRows'
+import { MealPhotoDropzone, MealPhotoPicker } from './MealPhotos'
+import { MAX_MEAL_PHOTOS, useMealPhotos } from './useMealPhotos'
 
 function useSession() {
   return useQuery({
@@ -61,70 +66,18 @@ function Pager({
   )
 }
 
-export function MealSummary({
-  revision,
-  showTotals = true,
-}: {
-  revision: api.Revision
-  showTotals?: boolean
-}) {
-  return (
-    <div className="meal-summary">
-      {showTotals && (
-        <p className="meal-totals">
-          {revision.totalHundredths > 0 && (
-            <strong>{formatInches(revision.totalHundredths)} inches</strong>
-          )}
-          {revision.totalHundredths > 0 && revision.wholeHotDogs > 0 && ' / '}
-          {revision.wholeHotDogs > 0 &&
-            `${revision.wholeHotDogs} whole hot dogs`}
-        </p>
-      )}
-      <p>
-        {new Intl.DateTimeFormat(undefined, {
-          dateStyle: 'medium',
-          timeStyle: 'short',
-          hourCycle: 'h23',
-        }).format(new Date(revision.eatenAt))}{' '}
-        {revision.location && ` / ${revision.location}`}
-      </p>
-      <ul className="member-list">
-        {revision.items.map((item, index) => (
-          <li key={index}>
-            {item.name}: {item.wholeQuantity} whole at{' '}
-            {formatInches(item.unitHundredths)} inches each
-            {item.partialHundredths > 0 &&
-              ` + ${formatInches(item.partialHundredths)} partial inches`}
-          </li>
-        ))}
-      </ul>
-      {revision.notes && <p className="competition-rules">{revision.notes}</p>}
-      <div className="photo-gallery">
-        {revision.photoIds.map((id, index) => (
-          <a key={id} href={api.photoUrl(id, false)}>
-            <img
-              loading="lazy"
-              src={api.photoUrl(id)}
-              alt={`Meal photo ${index + 1}`}
-            />
-          </a>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 export function MealsPage() {
   const session = useSession()
+  const user = session.data?.user
   const [archived, setArchived] = useState(false)
   const [page, setPage] = useState(0)
   const meals = useQuery({
     queryKey: ['meals', 'list', archived, page],
     queryFn: ({ signal }) => api.listMeals(archived, page, signal),
-    enabled: Boolean(session.data?.user),
+    enabled: Boolean(user),
   })
   return (
-    <section className="competition-page">
+    <section className="competition-page feed-page">
       <span className="eyebrow">Your own record</span>
       <PageHeading title="My meals">
         <button
@@ -149,7 +102,7 @@ export function MealsPage() {
       <ErrorNotice error={session.error} />
       {session.isPending ? (
         <p role="status">Loading account...</p>
-      ) : !session.data?.user ? (
+      ) : !user ? (
         <p>
           <Link to="/sign-in">Sign in</Link> to view your meals.
         </p>
@@ -170,27 +123,28 @@ export function MealsPage() {
               {!meals.data.items.length && (
                 <p>No {archived ? 'archived' : 'saved'} meals here yet.</p>
               )}
-              <div className="competition-grid">
+              <div className="meal-feed">
                 {meals.data.items.map((meal) => (
-                  <article className="competition-card" key={meal.id}>
-                    <h2>
+                  <MealFeedCard
+                    key={meal.id}
+                    label={`${user.displayName}'s meal`}
+                    displayName={user.displayName}
+                    profilePhotoId={user.profilePhotoId}
+                    subtitle={
                       <Link to={`/meals/${meal.id}`}>
                         {meal.revision.items[0]?.name ?? 'Hot dogs'}
                       </Link>
-                    </h2>
-                    <p>
-                      {formatInches(meal.revision.totalHundredths)} inches /{' '}
-                      {meal.revision.wholeHotDogs} whole hot dogs
-                    </p>
-                    <p>{meal.revision.location}</p>
-                    <p>
+                    }
+                    revision={meal.revision}
+                  >
+                    <p className="form-note">
                       {
                         meal.submissions.filter((entry) => !entry.withdrawn)
                           .length
                       }{' '}
                       competition submissions
                     </p>
-                  </article>
+                  </MealFeedCard>
                 ))}
               </div>
               <Pager
@@ -207,10 +161,14 @@ export function MealsPage() {
 }
 
 function Targets({
+  all,
+  changeAll,
   selected,
   change,
   competitions,
 }: {
+  all: boolean
+  changeAll: (all: boolean) => void
   selected: string[]
   change: (ids: string[]) => void
   competitions: Competition[]
@@ -219,169 +177,86 @@ function Targets({
   const eligible = competitions.slice(page * 20, (page + 1) * 20)
   return (
     <section className="competition-section">
-      <h2>Submit to competitions</h2>
-      <p>
-        Optional. Choose the joined competitions to receive this exact revision,
-        including its location, notes, and photos. Every member can see it.
-        Unselected existing submissions stay unchanged, even if you remove a
-        checkmark here.
-      </p>
-      <p>
-        All affected limited-time competitions must permit meal sharing. The
-        all-time leaderboard can also receive the meal. Written eligibility
-        rules still apply. The server checks dates and submission deadlines when
-        saving.
-      </p>
-      <p role="status">{selected.length} selected</p>
-      {!eligible.length && <p>No open joined competitions on this page.</p>}
-      {eligible.map((item) => (
-        <div key={item.id}>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={selected.includes(item.id)}
-              disabled={!selected.includes(item.id) && selected.length >= 20}
-              onChange={(event) =>
-                change(
-                  event.target.checked
-                    ? [...selected, item.id]
-                    : selected.filter((id) => id !== item.id),
-                )
-              }
-            />
-            Submit to {item.name}
-          </label>
-          <details>
-            <summary>Rules and dates for {item.name}</summary>
-            <p>{item.rules || 'No additional written rules.'}</p>
-            <p>
-              {formatTime(item.startsAt, item.timeZone)} to{' '}
-              {formatTime(item.endsAt, item.timeZone)}
-            </p>
-            <p>
-              Submission cutoff:{' '}
-              {formatTime(item.submissionClosesAt, item.timeZone)}. Sharing:{' '}
-              {item.allowSharedMeals ? 'allowed' : 'not allowed'}.
-            </p>
-          </details>
-        </div>
-      ))}
-      <Pager
-        page={page}
-        hasMore={(page + 1) * 20 < competitions.length}
-        change={setPage}
-      />
-    </section>
-  )
-}
-
-function PhotoPicker({
-  selected,
-  change,
-  busy,
-}: {
-  selected: string[]
-  change: (ids: string[]) => void
-  busy: (value: boolean) => void
-}) {
-  const cache = useQueryClient()
-  const staged = useQuery({
-    queryKey: ['meals', 'staged-photos'],
-    queryFn: ({ signal }) => api.stagedPhotos(signal),
-  })
-  const [file, setFile] = useState<File | null>(null)
-  const upload = useMutation({
-    mutationFn: async () => {
-      if (!file) throw new Error('Choose a photo first.')
-      if (file.size > 5 * 1024 * 1024)
-        throw new Error('Choose a JPEG or PNG no larger than 5 MiB.')
-      busy(true)
-      try {
-        return await api.uploadPhoto(file)
-      } finally {
-        busy(false)
-      }
-    },
-    onSuccess: async (photo) => {
-      if (selected.length < 5) change([...selected, photo.id])
-      await cache.invalidateQueries({ queryKey: ['meals', 'staged-photos'] })
-    },
-  })
-  const discard = useMutation({
-    mutationFn: (id: string) => api.discardPhoto(id),
-    onSuccess: async (_, id) => {
-      change(selected.filter((photo) => photo !== id))
-      await cache.invalidateQueries({ queryKey: ['meals', 'staged-photos'] })
-    },
-  })
-  const photos = [...new Set([...selected, ...(staged.data ?? [])])]
-  return (
-    <section className="competition-section">
-      <h2>Optional meal photos</h2>
-      <p>
-        Attach up to five. Photos remain private unless included in a selected
-        competition snapshot; they never become public directory photos.
-        JPEG/PNG only, up to 5 MiB and 12 megapixels (6000 pixels per side).
-        Metadata is removed.
-      </p>
-      <label htmlFor="meal-photo-file">Meal photo file</label>
-      <input
-        id="meal-photo-file"
-        type="file"
-        accept="image/jpeg,image/png"
-        onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-      />
-      <button
-        type="button"
-        className="text-button"
-        disabled={!file || upload.isPending || selected.length >= 5}
-        onClick={() => upload.mutate()}
-      >
-        Upload private photo
-      </button>
-      <ErrorNotice error={upload.error} />
-      <ErrorNotice error={staged.error} />
-      <ErrorNotice error={discard.error} />
-      <div className="photo-gallery">
-        {photos.map((id, index) => (
-          <div key={id}>
-            <img
-              src={api.photoUrl(id)}
-              alt={`Available meal photo ${index + 1}`}
-            />
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={selected.includes(id)}
-                disabled={!selected.includes(id) && selected.length >= 5}
-                onChange={(event) =>
-                  change(
-                    event.target.checked
-                      ? [...selected, id]
-                      : selected.filter((photo) => photo !== id),
-                  )
-                }
-              />
-              Attach photo {index + 1}
-            </label>
-            {staged.data?.includes(id) && (
-              <button
-                type="button"
-                className="text-button"
-                disabled={discard.isPending}
-                onClick={() => discard.mutate(id)}
-              >
-                Discard unattached photo {index + 1}
-              </button>
-            )}
-          </div>
-        ))}
+      <div className="meal-section-heading">
+        <h2>Share with competitions</h2>
+        <InfoPopup title="About competition sharing">
+          <p>
+            Selected competitions receive this revision, including its location,
+            notes, and photos, visible to their members.
+          </p>
+          <p>
+            Unselected existing submissions stay unchanged; removing a checkmark
+            does not withdraw a previous submission.
+          </p>
+          <p>
+            All affected limited-time competitions must permit sharing. The
+            all-time leaderboard can also receive the meal. Competition rules,
+            eating windows, and submission deadlines still apply.
+          </p>
+        </InfoPopup>
       </div>
-      <p className="form-note">
-        Unattached uploads can be discarded here. Attached photos remain in
-        revision history; removing a checkmark does not change older
-        submissions.
-      </p>
+      <label className="checkbox-label">
+        <input
+          type="checkbox"
+          checked={all}
+          onChange={(event) => changeAll(event.target.checked)}
+        />
+        Share with all eligible competitions
+      </label>
+      <p role="status">{selected.length} selected</p>
+      {!competitions.length && (
+        <p>No open joined competitions; this meal stays private.</p>
+      )}
+      {selected.length > 20 && (
+        <p role="alert">
+          Choose specific competitions to share with at most 20 at a time.
+        </p>
+      )}
+      {!all && (
+        <div role="group" aria-label="Choose competitions">
+          {eligible.map((item) => (
+            <div key={item.id}>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(item.id)}
+                  disabled={
+                    !selected.includes(item.id) && selected.length >= 20
+                  }
+                  onChange={(event) =>
+                    change(
+                      event.target.checked
+                        ? [...selected, item.id]
+                        : selected.filter((id) => id !== item.id),
+                    )
+                  }
+                />
+                Submit to {item.name}
+              </label>
+              <details>
+                <summary>Rules and dates for {item.name}</summary>
+                <p>{item.rules || 'No additional written rules.'}</p>
+                <p>
+                  {formatTime(item.startsAt, item.timeZone)} to{' '}
+                  {formatTime(item.endsAt, item.timeZone)}
+                </p>
+                <p>
+                  Submission cutoff:{' '}
+                  {formatTime(item.submissionClosesAt, item.timeZone)}. Sharing:{' '}
+                  {item.allowSharedMeals ? 'allowed' : 'not allowed'}.
+                </p>
+              </details>
+            </div>
+          ))}
+          {competitions.length > 20 && (
+            <Pager
+              page={page}
+              hasMore={(page + 1) * 20 < competitions.length}
+              change={setPage}
+            />
+          )}
+        </div>
+      )}
     </section>
   )
 }
@@ -413,7 +288,15 @@ function roundMealTime(local: string, zone: string, occurrence: Occurrence) {
   }
 }
 
-function MealForm({ initial }: { initial?: api.Meal }) {
+function MealForm({
+  initial,
+  displayName,
+  profilePhotoId,
+}: {
+  initial?: api.Meal
+  displayName: string
+  profilePhotoId?: string | null
+}) {
   const navigate = useNavigate()
   const cache = useQueryClient()
   const revision = initial?.revision
@@ -425,15 +308,35 @@ function MealForm({ initial }: { initial?: api.Meal }) {
       ? fromInstant(revision.eatenAt, zone)
       : { local: '', occurrence: 'reject' as const }
   })
-  const [time, setTime] = useState(initialTime.local.slice(0, 16))
+  const [mealDate, setMealDate] = useState(initialTime.local.slice(0, 10))
+  const [mealTime, setMealTime] = useState(initialTime.local.slice(11, 16))
+  const time = mealDate && mealTime ? `${mealDate}T${mealTime}` : ''
+  const setTime = (local: string) => {
+    setMealDate(local.slice(0, 10))
+    setMealTime(local.slice(11, 16))
+  }
   const [timeChanged, setTimeChanged] = useState(false)
   const [occurrence, setOccurrence] = useState<Occurrence>(
     initialTime.occurrence,
   )
   const [venueId, setVenue] = useState(revision?.venueId ?? '')
-  const [location, setLocation] = useState(
-    revision?.venueId ? '' : (revision?.location ?? ''),
+  const [venueLabel, setVenueLabel] = useState(
+    revision?.venueId ? revision.location : '',
   )
+  const initiallyAtHome =
+    !revision ||
+    (!revision.venueId && revision.location.trim().toLowerCase() === 'home')
+  const [atHome, setAtHome] = useState(initiallyAtHome)
+  const homeLocation = initiallyAtHome && revision ? revision.location : 'Home'
+  const [location, setLocation] = useState(
+    initiallyAtHome || revision?.venueId ? '' : (revision?.location ?? ''),
+  )
+  const selectedVenue = atHome ? '' : venueId
+  const selectedLocation = atHome
+    ? homeLocation
+    : venueId
+      ? venueLabel
+      : location
   const [notes, setNotes] = useState(revision?.notes ?? '')
   const [count, setCount] = useState(
     revision ? String(revision.wholeHotDogs) : '',
@@ -441,26 +344,63 @@ function MealForm({ initial }: { initial?: api.Meal }) {
   const [length, setLength] = useState(
     revision ? formatInches(revision.totalHundredths) : '',
   )
+  const [rows, setRows] = useState<HotDogRow[] | null>(() =>
+    revision
+      ? revision.items.length
+        ? revision.items.map((item) => ({
+            key: crypto.randomUUID(),
+            name: item.name,
+            inches: item.unitHundredths
+              ? formatInches(item.unitHundredths)
+              : '',
+            wholeQuantity: item.wholeQuantity,
+            partialHundredths: item.partialHundredths,
+            condiments: item.condiments ?? [],
+          }))
+        : null
+      : [newHotDog()],
+  )
+  const [includeLength, setIncludeLength] = useState(
+    Boolean(revision?.totalHundredths),
+  )
+  const [previewTime] = useState(() => new Date().toISOString())
   const [photoIds, setPhotos] = useState(revision?.photoIds ?? [])
-  const [uploading, setUploading] = useState(false)
-  const [targets, setTargets] = useState<string[]>([])
+  const { connectInput, ...photos } = useMealPhotos(photoIds, setPhotos)
+  const [allTargets, setAllTargets] = useState(true)
+  const [customTargets, setTargets] = useState<string[]>([])
   const competitions = useQuery({
     queryKey: ['competitions', 'logging'],
     queryFn: ({ signal }) => loggingCompetitions(signal),
   })
   const modes = competitions.data?.map((item) => item.trackingMode) ?? []
+  const eligibleIds = competitions.data?.map((item) => item.id) ?? []
+  const targets = allTargets
+    ? eligibleIds
+    : customTargets.filter((id) => eligibleIds.includes(id))
   const tracksCount =
     modes.length === 0 || modes.some((mode) => mode !== 'LENGTH')
-  const tracksLength =
-    modes.length === 0 || modes.some((mode) => mode !== 'COUNT')
-  const [venuePage, setVenuePage] = useState(0)
-  const venues = useQuery({
-    queryKey: ['directory', 'venues', venuePage],
-    queryFn: ({ signal }) => listVenues(venuePage, signal),
-  })
+  const tracksLength = includeLength || modes.some((mode) => mode !== 'COUNT')
   const pendingRequest = useRef<{ payload: string; requestId: string } | null>(
     null,
   )
+  const measurements = () => {
+    const items = rows ? rowItems(rows) : []
+    return {
+      items,
+      totalHundredths: rows
+        ? items.reduce(
+            (total, item) =>
+              total +
+              item.wholeQuantity * item.unitHundredths +
+              item.partialHundredths,
+            0,
+          )
+        : toHundredths(length || '0', 20199980),
+      wholeHotDogs: rows
+        ? items.reduce((total, item) => total + item.wholeQuantity, 0)
+        : wholeQuantity(count || '0', 2000),
+    }
+  }
   const roundTime = () => {
     if (!time || (revision && !timeChanged)) return
     try {
@@ -473,6 +413,10 @@ function MealForm({ initial }: { initial?: api.Meal }) {
   }
   const save = useMutation({
     mutationFn: async () => {
+      if (Boolean(mealDate) !== Boolean(mealTime))
+        throw new Error(
+          'Choose both a meal date and time, or leave both blank.',
+        )
       let eatenAt = revision?.eatenAt
       if (time && (!revision || timeChanged)) {
         const rounded = roundMealTime(time, zone, occurrence)
@@ -481,25 +425,19 @@ function MealForm({ initial }: { initial?: api.Meal }) {
         eatenAt = toInstant(rounded.local, zone, rounded.occurrence)
       }
       if (timeChanged && !time) eatenAt = undefined
-      const totalHundredths = toHundredths(length || '0', 20199980)
-      const wholeHotDogs = wholeQuantity(count || '0', 2000)
+      const { items, totalHundredths, wholeHotDogs } = measurements()
       if (totalHundredths === 0 && wholeHotDogs === 0)
         throw new Error('Add a hot dog count or total inches before saving.')
-      const keepItems = Boolean(
-        revision?.items.length &&
-        totalHundredths === revision.totalHundredths &&
-        wholeHotDogs === revision.wholeHotDogs,
-      )
       const body = {
         version: initial?.version ?? 0,
         content: {
           eatenAt,
-          venueId: venueId || null,
-          location: venueId ? '' : location,
+          venueId: selectedVenue || null,
+          location: selectedVenue ? '' : selectedLocation,
           notes,
           photoIds,
-          items: keepItems ? revision!.items : [],
-          ...(keepItems ? {} : { totalHundredths, wholeHotDogs }),
+          items,
+          ...(rows ? {} : { totalHundredths, wholeHotDogs }),
         },
         competitionIds: targets,
       }
@@ -518,20 +456,81 @@ function MealForm({ initial }: { initial?: api.Meal }) {
       navigate(`/meals/${meal.id}`)
     },
   })
+  let previewMeasurements: Pick<
+    api.Revision,
+    'items' | 'totalHundredths' | 'wholeHotDogs'
+  > = {
+    items:
+      rows?.map((row) => ({
+        name: row.name.trim() || 'Hotdog',
+        unitHundredths: 0,
+        wholeQuantity: row.wholeQuantity,
+        partialHundredths: row.partialHundredths,
+        condiments: row.condiments,
+      })) ?? [],
+    totalHundredths: 0,
+    wholeHotDogs:
+      rows?.reduce((total, row) => total + row.wholeQuantity, 0) ?? 0,
+  }
+  try {
+    previewMeasurements = measurements()
+  } catch {
+    // Partial measurements are validated on save, not while typing.
+  }
+  let eatenAt =
+    timeChanged && !time ? previewTime : (revision?.eatenAt ?? previewTime)
+  if (time && (!revision || timeChanged)) {
+    try {
+      const rounded = roundMealTime(time, zone, occurrence)
+      eatenAt = toInstant(rounded.local, zone, rounded.occurrence)
+    } catch {
+      // Keep the last stored time visible until a valid override is entered.
+    }
+  }
+  const preview: api.Revision = {
+    id: 'preview',
+    version: 0,
+    eatenAt,
+    venueId: selectedVenue || null,
+    location: selectedLocation,
+    notes,
+    photoIds,
+    ...previewMeasurements,
+  }
   return (
     <form
-      className="competition-form"
+      className="competition-form meal-editor"
       onSubmit={(event: FormEvent) => {
         event.preventDefault()
+        if (
+          save.isPending ||
+          photos.upload.isPending ||
+          photos.discard.isPending ||
+          photoIds.length > MAX_MEAL_PHOTOS ||
+          targets.length > 20 ||
+          !competitions.isSuccess
+        )
+          return
         save.mutate()
       }}
     >
       <fieldset disabled={save.isPending}>
-        <legend>What you ate</legend>
-        <p>
-          Add your totals and save. Only the measurements used by your open
-          joined competitions are shown. Eat at your own pace.
-        </p>
+        <legend className="sr-only">Log your meal</legend>
+        <MealFeedCard
+          label="Meal preview"
+          displayName={displayName}
+          profilePhotoId={profilePhotoId}
+          subtitle={
+            <span className="form-note">
+              {targets.length
+                ? `Sharing with ${targets.length} ${targets.length === 1 ? 'competition' : 'competitions'}`
+                : 'Private meal'}
+            </span>
+          }
+          revision={preview}
+          photos={<MealPhotoDropzone selected={photoIds} photos={photos} />}
+          actions={<span className="eyebrow">Preview</span>}
+        />
         {competitions.isPending && (
           <p role="status">Loading joined competitions...</p>
         )}
@@ -545,128 +544,216 @@ function MealForm({ initial }: { initial?: api.Meal }) {
             Retry joined competitions
           </button>
         )}
-        {tracksCount && (
-          <>
-            <label htmlFor="meal-count">How many hot dogs?</label>
-            <input
-              id="meal-count"
-              inputMode="numeric"
-              pattern="[0-9]+"
-              required
-              value={count}
-              onChange={(event) => setCount(event.target.value)}
-            />
-          </>
-        )}
-        {tracksLength && (
-          <>
-            <label htmlFor="meal-length">Total inches</label>
-            <input
-              id="meal-length"
-              inputMode="decimal"
-              required
-              value={length}
-              onChange={(event) => setLength(event.target.value)}
-            />
-            <p className="form-note">
-              Combined length eaten, not length per hot dog. Use your actual
-              measurement, with up to two decimal places.
-            </p>
-          </>
-        )}
-        <details className="competition-section">
-          <summary>Add photos, location, time, or notes (optional)</summary>
-          <label htmlFor="meal-time">When you ate</label>
-          <input
-            id="meal-time"
-            type="datetime-local"
-            step="60"
-            aria-describedby="meal-time-hint"
-            value={time}
-            onChange={(event) => {
-              setTime(event.target.value)
-              setTimeChanged(true)
-            }}
-            onBlur={roundTime}
+        {rows ? (
+          <HotDogInputs
+            rows={rows}
+            change={setRows}
+            tracksLength={tracksLength}
           />
-          <p id="meal-time-hint" className="form-note">
-            Leave blank to use the time you save. Entered times use your
-            device's local time, rounded to the nearest 15 minutes without
-            moving a past meal into the future.
-          </p>
-          <h2>Where</h2>
-          <label htmlFor="meal-venue">Approved venue (optional)</label>
-          <select
-            id="meal-venue"
-            value={venueId}
-            onChange={(event) => setVenue(event.target.value)}
-          >
-            <option value="">No venue / optional private label</option>
-            {venueId &&
-              !venues.data?.items.some((item) => item.id === venueId) && (
-                <option value={venueId}>
-                  {revision?.location ?? 'Selected venue'}
-                </option>
-              )}
-            {venues.data?.items.map((venue) => (
-              <option key={venue.id} value={venue.id}>
-                {venue.name} / {venue.address}
-              </option>
-            ))}
-          </select>
-          <ErrorNotice error={venues.error} />
-          {venues.data && (
-            <Pager
-              page={venuePage}
-              hasMore={venues.data.hasMore}
-              change={setVenuePage}
+        ) : (
+          <section className="competition-section">
+            <div className="meal-section-heading">
+              <h2>Recorded meal totals</h2>
+              <InfoPopup title="About older meal totals">
+                <p>
+                  This meal was saved as aggregate totals, without individual
+                  hot dog rows. Editing these fields keeps those measurements
+                  intact.
+                </p>
+                <p>
+                  Choose individual rows only if you want to replace those
+                  totals with newly entered hot dogs.
+                </p>
+              </InfoPopup>
+            </div>
+            {(tracksCount || Boolean(revision?.wholeHotDogs)) && (
+              <>
+                <label htmlFor="meal-count">How many hot dogs?</label>
+                <input
+                  id="meal-count"
+                  inputMode="numeric"
+                  pattern="[0-9]+"
+                  value={count}
+                  onChange={(event) => setCount(event.target.value)}
+                />
+              </>
+            )}
+            {tracksLength && (
+              <>
+                <label htmlFor="meal-length">Total inches</label>
+                <input
+                  id="meal-length"
+                  inputMode="decimal"
+                  value={length}
+                  onChange={(event) => setLength(event.target.value)}
+                />
+              </>
+            )}
+            <button
+              type="button"
+              className="text-button"
+              onClick={() => setRows([newHotDog()])}
+            >
+              Replace totals with individual hot dogs
+            </button>
+          </section>
+        )}
+        {!modes.some((mode) => mode !== 'COUNT') && (
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={includeLength}
+              onChange={(event) => setIncludeLength(event.target.checked)}
             />
-          )}
-          {!venueId && (
-            <>
-              <label htmlFor="meal-location">Private location label</label>
+            Include inches
+          </label>
+        )}
+        <MealPhotoPicker
+          selected={photoIds}
+          change={setPhotos}
+          photos={photos}
+          connectInput={connectInput}
+        />
+        <section className="competition-section">
+          <div className="meal-section-heading">
+            <h2>Location</h2>
+            <InfoPopup title="About meal locations">
+              <p>Home is a label, not a stored address or GPS position.</p>
+              <p>
+                Location labels and selected venues are visible to members of
+                competitions you choose, but private labels never enter the
+                public venue directory.
+              </p>
+            </InfoPopup>
+          </div>
+          <fieldset className="meal-location-options">
+            <legend className="sr-only">Meal location</legend>
+            <label className="meal-location-choice">
               <input
-                id="meal-location"
-                maxLength={300}
-                value={location}
-                onChange={(event) => setLocation(event.target.value)}
+                type="radio"
+                name="meal-location-mode"
+                checked={atHome}
+                onChange={() => setAtHome(true)}
               />
+              Home
+            </label>
+            <label className="meal-location-choice">
+              <input
+                type="radio"
+                name="meal-location-mode"
+                checked={!atHome}
+                onChange={() => setAtHome(false)}
+              />
+              Somewhere else
+            </label>
+          </fieldset>
+          {!atHome && (
+            <>
+              <MealVenuePicker
+                selected={venueId}
+                selectedLabel={venueLabel}
+                change={(id, label) => {
+                  setVenue(id)
+                  setVenueLabel(label)
+                }}
+              />
+              {!venueId && (
+                <>
+                  <label htmlFor="meal-location">Private location label</label>
+                  <input
+                    id="meal-location"
+                    maxLength={300}
+                    value={location}
+                    onChange={(event) => setLocation(event.target.value)}
+                  />
+                </>
+              )}
             </>
           )}
-          <p className="form-note">
-            Private labels stay out of the public directory, but are visible to
-            members of competitions you select.
-          </p>
-          <label htmlFor="meal-notes">Notes</label>
-          <textarea
-            id="meal-notes"
-            maxLength={2000}
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-          />
-          <PhotoPicker
-            selected={photoIds}
-            change={setPhotos}
-            busy={setUploading}
-          />
-        </details>
+          <details>
+            <summary>Notes (optional)</summary>
+            <label htmlFor="meal-notes">Notes</label>
+            <textarea
+              id="meal-notes"
+              maxLength={2000}
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+            />
+          </details>
+        </section>
         {competitions.data && (
           <Targets
+            all={allTargets}
+            changeAll={setAllTargets}
             selected={targets}
             change={setTargets}
             competitions={competitions.data}
           />
         )}
+        <section className="competition-section">
+          <div className="meal-section-heading">
+            <h2>Meal date override</h2>
+            <InfoPopup title="About the meal date">
+              <p>
+                Leave both fields blank to use the time you save. Entered times
+                use your device's local time, rounded to the nearest 15 minutes
+                without moving a past meal into the future.
+              </p>
+              <p>
+                Existing precise timestamps stay unchanged unless you edit this
+                field. Competition eating windows and submission deadlines still
+                apply.
+              </p>
+            </InfoPopup>
+          </div>
+          <div className="meal-date-time">
+            <div>
+              <label htmlFor="meal-date">Meal date</label>
+              <input
+                id="meal-date"
+                type="date"
+                value={mealDate}
+                onChange={(event) => {
+                  setMealDate(event.target.value)
+                  setTimeChanged(true)
+                }}
+                onBlur={roundTime}
+              />
+            </div>
+            <div>
+              <label htmlFor="meal-time">Meal time</label>
+              <input
+                id="meal-time"
+                type="time"
+                step="60"
+                value={mealTime}
+                onChange={(event) => {
+                  setMealTime(event.target.value)
+                  setTimeChanged(true)
+                }}
+                onBlur={roundTime}
+              />
+            </div>
+          </div>
+          <p className="form-note">
+            Optional; leave both blank to use the save time.
+          </p>
+        </section>
         {initial && (
           <p className="form-notice">
-            This creates a new source revision. Closed and unselected
-            submissions keep their original contents and totals. Withdrawals are
-            separate actions on the meal detail page.
+            Closed and unselected submissions stay unchanged.
           </p>
         )}
         <button
           className="button"
-          disabled={save.isPending || uploading || !competitions.isSuccess}
+          disabled={
+            save.isPending ||
+            photos.upload.isPending ||
+            photos.discard.isPending ||
+            photoIds.length > MAX_MEAL_PHOTOS ||
+            targets.length > 20 ||
+            !competitions.isSuccess
+          }
         >
           Save meal and selected submissions
         </button>
@@ -686,7 +773,7 @@ export function MealEditorPage() {
     retry: false,
   })
   return (
-    <section className="competition-page">
+    <section className="competition-page meal-editor-page">
       <Link to="/account/meals">My meals</Link>
       <PageHeading title={id ? 'Edit meal and submissions' : 'Log a meal'} />
       <ErrorNotice error={session.error} />
@@ -709,6 +796,8 @@ export function MealEditorPage() {
               <MealForm
                 key={detail.data?.version ?? 'new'}
                 initial={detail.data}
+                displayName={session.data.user.displayName}
+                profilePhotoId={session.data.user.profilePhotoId}
               />
             )
           )}
@@ -778,7 +867,12 @@ export function MealPage() {
     enabled: Boolean(detail.data),
   })
   const [archiveKey] = useState(() => crypto.randomUUID())
-  const refresh = () => cache.invalidateQueries({ queryKey: ['meals'] })
+  const refresh = async () => {
+    await Promise.all([
+      cache.invalidateQueries({ queryKey: ['meals'] }),
+      cache.invalidateQueries({ queryKey: ['feed'] }),
+    ])
+  }
   const archive = useMutation({
     mutationFn: () => api.archiveMeal(id, detail.data!.version, archiveKey),
     onSuccess: refresh,
