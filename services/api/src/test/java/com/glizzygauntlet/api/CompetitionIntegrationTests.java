@@ -10,6 +10,8 @@ import com.glizzygauntlet.api.auth.SessionAuthentication.AccountPrincipal;
 import com.glizzygauntlet.api.competitions.CompetitionException;
 import com.glizzygauntlet.api.competitions.CompetitionService;
 import com.glizzygauntlet.api.competitions.CompetitionService.*;
+import com.glizzygauntlet.api.meals.MealService;
+import com.glizzygauntlet.api.progress.ProgressService;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -17,6 +19,8 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import javax.sql.DataSource;
+import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,6 +47,9 @@ class CompetitionIntegrationTests {
   @Autowired MockMvc mvc;
   @Autowired ObjectMapper json;
   @Autowired PlatformTransactionManager transactions;
+  @Autowired MealService meals;
+  @Autowired ProgressService progress;
+  @Autowired DataSource dataSource;
   UUID owner;
   UUID participant;
   UUID outsider;
@@ -58,20 +65,266 @@ class CompetitionIntegrationTests {
   }
 
   @Test
+  void persistsEachTrackingModeAndDefaultsOlderRequestsToBoth() throws Exception {
+    var settings = settings(Visibility.PUBLIC);
+    String legacy = json.writeValueAsString(settings).replace(",\"trackingMode\":\"BOTH\"", "");
+    mvc.perform(
+            post("/api/v1/competitions")
+                .with(as(owner))
+                .with(csrf())
+                .contentType("application/json")
+                .content(legacy))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.trackingMode").value("BOTH"));
+    for (var mode : TrackingMode.values()) {
+      var configured =
+          new Settings(
+              settings.name(),
+              settings.rules(),
+              settings.visibility(),
+              settings.timeZone(),
+              settings.startsAt(),
+              settings.endsAt(),
+              settings.allowSharedMeals(),
+              mode);
+      var draft = competitions.create(owner, configured);
+      assertThat(competitions.get(draft.id(), owner).trackingMode()).isEqualTo(mode);
+      var changed = competitions.update(draft.id(), owner, draft.version(), settings);
+      assertThat(changed.trackingMode()).isEqualTo(TrackingMode.BOTH);
+    }
+    mvc.perform(
+            post("/api/v1/competitions")
+                .with(as(owner))
+                .with(csrf())
+                .contentType("application/json")
+                .content(json.writeValueAsString(settings).replace("\"BOTH\"", "\"UNKNOWN\"")))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
   void keepsDraftsAndPrivateCompetitionsOutOfDiscoveryAndOutsiderReads() throws Exception {
     var draft = competitions.create(owner, settings(Visibility.PUBLIC));
     var privateCompetition = published(Visibility.PRIVATE);
     rejected(HttpStatus.NOT_FOUND, "NOT_FOUND", () -> competitions.get(draft.id(), outsider));
     rejected(
         HttpStatus.NOT_FOUND, "NOT_FOUND", () -> competitions.get(privateCompetition.id(), null));
-    assertThat(competitions.list(null, "public", 0).items()).isEmpty();
-    assertThat(competitions.list(owner, "mine", 0).items()).hasSize(2);
-    assertThat(competitions.list(participant, "mine", 0).items()).isEmpty();
+    assertThat(competitions.list(null, "public", 0).items())
+        .allMatch(Competition::allTime)
+        .hasSize(1);
+    assertThat(competitions.list(owner, "mine", 0).items()).hasSize(3);
+    assertThat(competitions.list(participant, "mine", 0).items())
+        .allMatch(Competition::allTime)
+        .hasSize(1);
+    assertThat(competitions.list(owner, "administered", 0).items())
+        .extracting(Competition::id)
+        .containsExactlyInAnyOrder(draft.id(), privateCompetition.id());
+    assertThat(competitions.list(participant, "administered", 0).items()).isEmpty();
+    assertThat(competitions.list(owner, "participating", 0).items())
+        .allMatch(Competition::allTime)
+        .hasSize(1);
+    var invitation = competitions.invite(privateCompetition.id(), owner);
+    competitions.joinInvitation(participant, token(invitation));
+    assertThat(competitions.list(participant, "participating", 0).items())
+        .extracting(Competition::id)
+        .containsExactlyInAnyOrder(CompetitionService.ALL_TIME_ID, privateCompetition.id());
+    assertThat(competitions.list(outsider, "participating", 0).items())
+        .allMatch(Competition::allTime)
+        .hasSize(1);
     mvc.perform(get("/api/v1/competitions/" + privateCompetition.id()).with(as(outsider)))
         .andExpect(status().isNotFound())
         .andExpect(content().json("{\"error\":\"NOT_FOUND\"}"));
     mvc.perform(get("/api/v1/competitions?scope=mine")).andExpect(status().isUnauthorized());
+    for (String scope : List.of("administered", "participating")) {
+      mvc.perform(get("/api/v1/competitions").param("scope", scope))
+          .andExpect(status().isUnauthorized());
+    }
+    mvc.perform(get("/api/v1/competitions").param("scope", "administered").with(as(owner)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.items.length()").value(2));
     mvc.perform(get("/api/v1/competitions/" + draft.id())).andExpect(status().isNotFound());
+  }
+
+  @Test
+  void paginatesAdministeredCompetitionsIndependentlyFromOtherMemberships() {
+    for (int i = 0; i < 21; i++) competitions.create(owner, settings(Visibility.PRIVATE));
+    var first = competitions.list(owner, "administered", 0);
+    var second = competitions.list(owner, "administered", 1);
+    assertThat(first.items()).hasSize(20);
+    assertThat(first.hasMore()).isTrue();
+    assertThat(second.items()).hasSize(1);
+    assertThat(second.hasMore()).isFalse();
+    assertThat(first.items())
+        .extracting(Competition::id)
+        .doesNotContain(second.items().get(0).id());
+    assertThat(competitions.list(owner, "participating", 0).items())
+        .extracting(Competition::id)
+        .containsExactly(CompetitionService.ALL_TIME_ID);
+    assertThat(competitions.list(owner, "participating", 0).hasMore()).isFalse();
+    assertThat(competitions.list(owner, "mine", 0).items().get(0).allTime()).isTrue();
+  }
+
+  @Test
+  void permitsGlobalAllTimeAdministrationWithoutChangingLifetimeSettings() throws Exception {
+    UUID id = CompetitionService.ALL_TIME_ID;
+    database.update(
+        "UPDATE competitions SET organizer_id = ?, version = version + 1 WHERE id = ?", owner, id);
+    assertThat(competitions.get(id, owner).canAdminister()).isFalse();
+    database.update("INSERT INTO account_roles (user_id, role) VALUES (?, 'ADMIN')", owner);
+    var lifetime = competitions.get(id, owner);
+    assertThat(lifetime.viewerRole()).isEqualTo(Role.ORGANIZER);
+    assertThat(lifetime.phase()).isEqualTo(Phase.ACTIVE);
+    assertThat(lifetime.visibility()).isEqualTo(Visibility.PUBLIC);
+    assertThat(lifetime.trackingMode()).isEqualTo(TrackingMode.COUNT);
+    assertThat(lifetime.endsAt()).isNull();
+    assertThat(lifetime.submissionClosesAt()).isNull();
+    assertThat(accounts.profile(owner).roles())
+        .containsExactly(com.glizzygauntlet.api.auth.GlobalRoleService.Role.ADMIN);
+    assertThat(competitions.list(owner, "administered", 0).items())
+        .extracting(Competition::id)
+        .containsExactly(id);
+    assertThat(competitions.list(owner, "participating", 0).items()).isEmpty();
+    assertThat(competitions.list(owner, "mine", 0).items())
+        .extracting(Competition::id)
+        .containsExactly(id);
+    rejected(
+        HttpStatus.CONFLICT,
+        "SETTINGS_LOCKED",
+        () -> competitions.update(id, owner, lifetime.version(), settings(Visibility.PRIVATE)));
+    rejected(HttpStatus.FORBIDDEN, "ORGANIZER_ONLY", () -> competitions.invite(id, participant));
+    rejected(
+        HttpStatus.CONFLICT,
+        "CANNOT_EXCLUDE_ORGANIZER",
+        () -> competitions.exclude(id, owner, owner, "Cannot exclude the organizer."));
+    competitions.exclude(id, owner, participant, "Test moderation reason.");
+    assertThat(competitions.get(id, participant).viewerRole()).isEqualTo(Role.NONE);
+    accounts.findOrCreate("email", "participant@example.test", "participant@example.test");
+    rejected(HttpStatus.FORBIDDEN, "MEMBERSHIP_EXCLUDED", () -> competitions.join(id, participant));
+
+    var invitation = competitions.invite(id, owner);
+    assertThat(invitation.expiresAt())
+        .isBetween(Instant.now().plus(Duration.ofDays(6)), Instant.now().plus(Duration.ofDays(7)));
+    var preview = competitions.inspect(token(invitation));
+    assertThat(preview.endsAt()).isNull();
+    mvc.perform(
+            post("/api/v1/competition-invitations/inspect")
+                .with(csrf())
+                .contentType("application/json")
+                .content(json.writeValueAsString(java.util.Map.of("token", token(invitation)))))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.endsAt").value(org.hamcrest.Matchers.nullValue()));
+    assertThat(competitions.invitations(id, owner))
+        .singleElement()
+        .satisfies(
+            listed -> {
+              assertThat(listed.active()).isTrue();
+              assertThat(listed.expiresAt()).isEqualTo(invitation.expiresAt());
+            });
+    competitions.leave(id, outsider);
+    assertThat(competitions.joinInvitation(outsider, token(invitation)).viewerRole())
+        .isEqualTo(Role.MEMBER);
+    competitions.revoke(id, owner, invitation.id());
+    assertThat(competitions.invitations(id, owner).get(0).active()).isFalse();
+
+    competitions.leave(id, owner);
+    accounts.findOrCreate("email", "owner@example.test", "owner@example.test");
+    assertThat(competitions.get(id, owner).viewerRole()).isEqualTo(Role.NONE);
+    assertThat(competitions.list(owner, "administered", 0).items())
+        .extracting(Competition::id)
+        .containsExactly(id);
+    assertThat(competitions.list(owner, "joined", 0).items()).isEmpty();
+    assertThat(competitions.get(id, owner).canAdminister()).isTrue();
+    assertThat(competitions.invite(id, owner).id()).isNotNull();
+    assertThat(competitions.join(id, owner).viewerRole()).isEqualTo(Role.ORGANIZER);
+  }
+
+  @Test
+  void enrollsAccountsInAnEndlessCompetitionAndRespectsExplicitOptOut() throws Exception {
+    UUID id = CompetitionService.ALL_TIME_ID;
+    var lifetime = competitions.get(id, owner);
+    assertThat(lifetime.allTime()).isTrue();
+    assertThat(lifetime.phase()).isEqualTo(Phase.ACTIVE);
+    assertThat(lifetime.endsAt()).isNull();
+    assertThat(lifetime.submissionClosesAt()).isNull();
+    assertThat(lifetime.viewerRole()).isEqualTo(Role.MEMBER);
+    assertThat(lifetime.memberCount()).isEqualTo(3);
+    var ordinary = published(Visibility.PUBLIC);
+    database.update(
+        "UPDATE competitions SET starts_at = clock_timestamp() - interval '1 hour' WHERE id = ?",
+        ordinary.id());
+    var content = new MealService.Content(null, null, null, "", List.of(), List.of(), 600L, 2);
+    var saved =
+        meals.save(
+            null,
+            owner,
+            new MealService.Save(UUID.randomUUID(), 0L, content, List.of(id, ordinary.id())));
+    assertThat(progress.personal(id, owner, 0, 0).wholeHotDogs()).isEqualTo(2);
+    assertThat(progress.personal(id, owner, 0, 0).days()).hasSize(30);
+    mvc.perform(post("/api/v1/competitions/" + id + "/leave").with(as(owner)))
+        .andExpect(status().isForbidden());
+    mvc.perform(post("/api/v1/competitions/" + id + "/leave").with(csrf()))
+        .andExpect(status().isUnauthorized());
+    mvc.perform(post("/api/v1/competitions/" + id + "/leave").with(as(owner)).with(csrf()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.viewerRole").value("NONE"));
+    assertThat(meals.get(saved.id(), owner).submissions())
+        .anySatisfy(
+            entry -> {
+              assertThat(entry.competitionId()).isEqualTo(id);
+              assertThat(entry.withdrawn()).isTrue();
+            })
+        .anySatisfy(
+            entry -> {
+              assertThat(entry.competitionId()).isEqualTo(ordinary.id());
+              assertThat(entry.withdrawn()).isFalse();
+            });
+    assertThat(meals.get(saved.id(), owner).revision().id()).isEqualTo(saved.revision().id());
+    accounts.findOrCreate("email", "owner@example.test", "owner@example.test");
+    assertThat(competitions.get(id, owner).viewerRole()).isEqualTo(Role.NONE);
+    assertThat(competitions.list(owner, "joined", 0).items()).noneMatch(Competition::allTime);
+    competitions.join(id, owner);
+    competitions.join(id, owner);
+    assertThat(competitions.get(id, owner).memberCount()).isEqualTo(3);
+    assertThat(progress.personal(id, owner, 0, 0).wholeHotDogs()).isZero();
+    rejected(
+        HttpStatus.FORBIDDEN,
+        "ORGANIZER_ONLY",
+        () -> competitions.update(id, owner, 0, settings(Visibility.PUBLIC)));
+  }
+
+  @Test
+  void migratesExistingAccountsIntoTheAllTimeCompetition() {
+    String schema = "all_time_backfill_check";
+    try {
+      Flyway.configure()
+          .dataSource(dataSource)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .target("9")
+          .load()
+          .migrate();
+      UUID existing = UUID.randomUUID();
+      database.update(
+          "INSERT INTO " + schema + ".app_users (id, display_name) VALUES (?, 'Existing diner')",
+          existing);
+      Flyway.configure()
+          .dataSource(dataSource)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .load()
+          .migrate();
+      assertThat(
+              database.queryForObject(
+                  "SELECT count(*) FROM " + schema + ".competition_memberships WHERE user_id = ?",
+                  Long.class,
+                  existing))
+          .isEqualTo(1);
+      assertThat(
+              database.queryForObject(
+                  "SELECT all_time FROM " + schema + ".competitions", Boolean.class))
+          .isTrue();
+    } finally {
+      database.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+    }
   }
 
   @Test

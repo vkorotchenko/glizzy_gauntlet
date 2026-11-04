@@ -57,11 +57,14 @@ async function fillMeal(page: Page, eatenAt = new Date(Date.now() - 3600000)) {
   }, eatenAt.toISOString())
   await expect(page.getByLabel('Eating time zone')).toHaveCount(0)
   await expect(page.getByLabel('Repeated hour')).toHaveCount(0)
+  await page.getByLabel('How many hot dogs?').fill('2')
+  await page.getByLabel('Total inches', { exact: true }).fill('19')
+  await page
+    .getByText('Add photos, location, time, or notes (optional)', {
+      exact: true,
+    })
+    .click()
   await page.getByLabel('When you ate').fill(local)
-  await page.getByLabel('Item 1 name').fill('Measured house dog')
-  await page.getByLabel('Item 1 whole quantity').fill('2')
-  await page.getByLabel('Item 1 full length (inches)').fill('8')
-  await page.getByLabel('Item 1 additional partial inches').fill('3')
   await page.getByLabel('Private location label').fill('Private picnic')
 }
 async function photo(page: Page) {
@@ -95,15 +98,28 @@ test('records exact inches privately, rejects extra precision, and archives with
   request,
 }, info) => {
   await signIn(page, request, `meal-private-${info.project.name}`)
+  const session = (await (
+    await page.request.get('/api/v1/auth/session')
+  ).json()) as { csrfToken: string }
+  expect(
+    (
+      await page.request.post(
+        '/api/v1/competitions/00000000-0000-4000-8000-000000000000/leave',
+        {
+          headers: { 'X-CSRF-TOKEN': session.csrfToken },
+        },
+      )
+    ).status(),
+  ).toBe(200)
   await fillMeal(page)
-  await page.getByLabel('Item 1 full length (inches)').fill('8.001')
+  await page.getByLabel('Total inches', { exact: true }).fill('19.001')
   await page
     .getByRole('button', { name: 'Save meal and selected submissions' })
     .click()
   await expect(page.getByRole('alert')).toContainText(
     'at most two decimal places',
   )
-  await page.getByLabel('Item 1 full length (inches)').fill('8')
+  await page.getByLabel('Total inches', { exact: true }).fill('19')
   const image = await photo(page)
   const meal = await save(page)
   expect(new Date(meal.revision.eatenAt).getUTCMinutes() % 15).toBe(0)
@@ -138,7 +154,7 @@ test('records exact inches privately, rejects extra precision, and archives with
     await expect(page.getByText('No saved meals here yet.')).toBeVisible()
     await page.getByRole('button', { name: 'Show archived sources' }).click()
     await expect(
-      page.getByRole('link', { name: 'Measured house dog' }),
+      page.getByRole('link', { name: 'Hot dogs', exact: true }),
     ).toBeVisible()
     expect((await page.request.get(image)).status()).toBe(200)
     expect(
@@ -149,6 +165,108 @@ test('records exact inches privately, rejects extra precision, and archives with
   } finally {
     await guest.close()
   }
+})
+
+test('logs count-only meals without optional details and unions measurements across competitions', async ({
+  page,
+  request,
+}, info) => {
+  const container = process.env.E2E_TEST_DB_CONTAINER
+  test.skip(!container, 'Requires an explicitly allowed disposable database.')
+  await signIn(page, request, `simple-meal-${info.project.name}`)
+  const csrf = await headers(page)
+  const createActive = async (trackingMode: 'COUNT' | 'LENGTH') => {
+    const name = `Simple ${trackingMode} ${info.project.name} ${Date.now()}`
+    const created = await page.request.post('/api/v1/competitions', {
+      headers: csrf,
+      data: {
+        name,
+        rules: '',
+        visibility: 'PRIVATE',
+        timeZone: 'UTC',
+        startsAt: new Date(Date.now() + 86400000).toISOString(),
+        endsAt: new Date(Date.now() + 172800000).toISOString(),
+        allowSharedMeals: true,
+        trackingMode,
+      },
+    })
+    expect(created.status()).toBe(201)
+    const draft = (await created.json()) as { id: string; version: number }
+    expect(
+      (
+        await page.request.post(`/api/v1/competitions/${draft.id}/publish`, {
+          headers: csrf,
+          data: { version: draft.version },
+        })
+      ).ok(),
+    ).toBe(true)
+    expect(draft.id).toMatch(/^[a-f0-9-]{36}$/)
+    execFileSync(
+      'docker',
+      [
+        'exec',
+        container!,
+        'psql',
+        '-U',
+        'glizzy',
+        '-d',
+        'glizzy_gauntlet',
+        '-v',
+        'ON_ERROR_STOP=1',
+        '-c',
+        `UPDATE competitions SET starts_at = clock_timestamp() - interval '2 hours', ends_at = clock_timestamp() + interval '1 hour' WHERE id = '${draft.id}'`,
+      ],
+      { stdio: 'pipe' },
+    )
+    return { ...draft, name }
+  }
+  const count = await createActive('COUNT')
+  await page.goto('/meals/new')
+  const target = page.getByRole('checkbox', {
+    name: `Submit to ${count.name}`,
+    exact: true,
+  })
+  await expect(target).toBeVisible()
+  await expect(page.getByLabel('Total inches', { exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('When you ate')).toBeHidden()
+  await expect(page.getByLabel('Private location label')).toBeHidden()
+  await page.getByLabel('How many hot dogs?').fill('3')
+  await target.check()
+  const loggedAt = Date.now()
+  const meal = await save(page)
+  expect(meal.revision.wholeHotDogs).toBe(3)
+  expect(meal.revision.totalHundredths).toBe(0)
+  expect(meal.revision.location).toBe('')
+  expect(meal.revision.photoIds).toEqual([])
+  expect(meal.revision.items).toEqual([])
+  expect(Date.parse(meal.revision.eatenAt)).toBeGreaterThanOrEqual(
+    loggedAt - 1000,
+  )
+  await page.goto(`/competitions/${count.id}`)
+  const standings = page.getByRole('table', { name: 'Provisional standings' })
+  await expect(
+    standings.getByRole('columnheader', { name: 'Whole hot dogs' }),
+  ).toBeVisible()
+  await expect(
+    standings.getByRole('columnheader', { name: 'Inches' }),
+  ).toHaveCount(0)
+  await page.goto(`/competitions/${count.id}/progress`)
+  await expect(page.getByRole('img', { name: /Daily hot dogs/ })).toBeVisible()
+
+  const length = await createActive('LENGTH')
+  await page.goto('/meals/new')
+  await page.getByLabel('How many hot dogs?').fill('2')
+  await page.getByLabel('Total inches', { exact: true }).fill('15.5')
+  await page
+    .getByRole('checkbox', { name: `Submit to ${count.name}`, exact: true })
+    .check()
+  await page
+    .getByRole('checkbox', { name: `Submit to ${length.name}`, exact: true })
+    .check()
+  const shared = await save(page)
+  expect(shared.submissions).toHaveLength(2)
+  expect(shared.revision.totalHundredths).toBe(1550)
+  expect(shared.revision.wholeHotDogs).toBe(2)
 })
 
 test('shares explicit snapshots, preserves a closed competition, and revokes photo access on withdrawal', async ({
@@ -258,24 +376,27 @@ test('shares explicit snapshots, preserves a closed competition, and revokes pho
     ).toBeVisible()
     await expect(feed.getByText('19.00 inches')).toBeVisible()
     await expect(feed.getByRole('img', { name: 'Meal photo 1' })).toBeVisible()
-    await feed.getByRole('button', { name: 'Send a glizzy' }).click()
+    const footer = feed.getByRole('group', { name: 'Meal totals and likes' })
+    await expect(footer.getByText('2 hot dogs', { exact: true })).toBeVisible()
+    await expect(footer.getByText('0 likes')).toBeVisible()
+    await footer.getByRole('button', { name: 'Like', exact: true }).click()
     await expect(
-      feed.getByRole('button', { name: 'Glizzy sent' }),
+      footer.getByRole('button', { name: 'Liked', exact: true }),
     ).toHaveAttribute('aria-pressed', 'true')
-    await expect(feed.getByText('1 glizzy')).toBeVisible()
+    await expect(footer.getByText('1 like')).toBeVisible()
     await member.reload()
-    await expect(feed.getByText('1 glizzy')).toBeVisible()
-    await feed.getByRole('button', { name: 'Glizzy sent' }).click()
-    await expect(feed.getByText('0 glizzies')).toBeVisible()
+    await expect(footer.getByText('1 like')).toBeVisible()
+    await footer.getByRole('button', { name: 'Liked', exact: true }).click()
+    await expect(footer.getByText('0 likes')).toBeVisible()
     expect(
       await member.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth,
       ),
     ).toBe(true)
     await member.goto(`/competitions/${a.id}`)
-    const activity = member
-      .getByRole('heading', { name: 'Member meal activity' })
-      .locator('..')
+    const activity = member.getByRole('region', {
+      name: 'Member meal activity',
+    })
     await expect(activity.getByText('19.00 inches')).toBeVisible()
     execFileSync(
       'docker',
@@ -300,7 +421,7 @@ test('shares explicit snapshots, preserves a closed competition, and revokes pho
     await expect(
       page.getByRole('checkbox', { name: `Submit to ${a.name}`, exact: true }),
     ).not.toBeChecked()
-    await page.getByLabel('Item 1 additional partial inches').fill('1')
+    await page.getByLabel('Total inches', { exact: true }).fill('17')
     meal = await save(page)
     expect(meal.revision.totalHundredths).toBe(1700)
     expect(meal.submissions.map((item) => item.totalHundredths)).toEqual([
@@ -332,7 +453,13 @@ test('shares explicit snapshots, preserves a closed competition, and revokes pho
     await expect(member.getByText('No submitted meals yet.')).toBeVisible()
     await member.goto('/')
     await expect(member.getByText('Your crew is quiet for now.')).toBeVisible()
-    await expect(member.getByRole('article')).toHaveCount(0)
+    await expect(
+      member.getByRole('region', { name: 'Sample feed' }).getByRole('article'),
+    ).toHaveCount(2)
+    await expect(
+      member.getByRole('button', { name: 'Like', exact: true }),
+    ).toHaveCount(0)
+    await expect(member.getByText('19.00 inches')).toHaveCount(0)
     await page
       .getByRole('button', { name: 'Archive source (keep submissions)' })
       .click()

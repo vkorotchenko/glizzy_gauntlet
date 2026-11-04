@@ -58,6 +58,60 @@ class RecapIntegrationTests {
   }
 
   @Test
+  void ranksCountOnlyMealsByCountThroughProgressFinalizationAndCorrections() {
+    UUID competition = active("PUBLIC", CompetitionService.TrackingMode.COUNT);
+    var eatenAt = Instant.now().minusSeconds(25 * 3600).truncatedTo(ChronoUnit.MILLIS);
+    meals.save(
+        null,
+        author,
+        save(
+            0,
+            new MealService.Content(eatenAt, null, "", "", List.of(), List.of(), 0L, 3),
+            List.of(competition)));
+    meals.save(
+        null,
+        member,
+        save(
+            0,
+            new MealService.Content(eatenAt, null, "", "", List.of(), List.of(), 9000L, 3),
+            List.of(competition)));
+    assertThat(progress.standings(competition, null, 0).items())
+        .extracting(ProgressService.Standing::rank)
+        .containsExactly(1L, 1L);
+    var own = progress.personal(competition, author, 0, 0);
+    assertThat(own.wholeHotDogs()).isEqualTo(3);
+    assertThat(own.days().getLast().cumulativeWholeHotDogs()).isEqualTo(3);
+    assertThat(own.privateLocationCount()).isZero();
+    assertThat(own.places()).isEmpty();
+    close(competition);
+    var original = recaps.get(competition, null, null, 0);
+    assertThat(original.standings())
+        .extracting(ProgressService.Standing::rank)
+        .containsExactly(1L, 1L);
+    assertThat(recaps.highlights(competition, author, null).privateLocationCount()).isZero();
+    assertThat(recaps.highlights(competition, author, null).places()).isEmpty();
+    var entry =
+        meals.entries(competition, author, 0).items().stream()
+            .filter(item -> item.displayName().equals("Member"))
+            .findFirst()
+            .orElseThrow();
+    recaps.correct(
+        competition,
+        entry.id(),
+        author,
+        new RecapService.Correction(
+            UUID.randomUUID(), entry.version(), 0L, 4, false, "Count corrected"));
+    var revised = recaps.get(competition, null, null, 0);
+    assertThat(revised.standings())
+        .extracting(ProgressService.Standing::displayName)
+        .containsExactly("Member", "Captain");
+    assertThat(revised.standings())
+        .extracting(ProgressService.Standing::rank)
+        .containsExactly(1L, 2L);
+    assertThat(recaps.get(competition, null, 1L, 0)).isEqualTo(original);
+  }
+
+  @Test
   void finalizesAtTheDatabaseDeadlineOnceUnderConcurrentRequests() {
     UUID competition = active("PUBLIC");
     submit(competition, author, 1900);
@@ -353,6 +407,10 @@ class RecapIntegrationTests {
   }
 
   private UUID active(String visibility) {
+    return active(visibility, CompetitionService.TrackingMode.BOTH);
+  }
+
+  private UUID active(String visibility, CompetitionService.TrackingMode mode) {
     var start = Instant.now().plusSeconds(3600).truncatedTo(ChronoUnit.MILLIS);
     var draft =
         competitions.create(
@@ -364,7 +422,8 @@ class RecapIntegrationTests {
                 "America/New_York",
                 start,
                 start.plusSeconds(86400),
-                true));
+                true,
+                mode));
     competitions.publish(draft.id(), author, draft.version());
     database.update(
         "UPDATE competitions SET starts_at = clock_timestamp() - interval '48 hours' WHERE id = ?",

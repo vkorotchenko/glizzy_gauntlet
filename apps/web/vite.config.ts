@@ -11,7 +11,7 @@ export default defineConfig({
     proxy: Object.fromEntries(
       ['/api', '/auth', '/oauth2', '/login'].map((path) => [
         path,
-        'http://127.0.0.1:3000',
+        `http://127.0.0.1:${process.env.GATEWAY_PORT || '3000'}`,
       ]),
     ),
   },

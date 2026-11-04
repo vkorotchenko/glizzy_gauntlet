@@ -13,7 +13,10 @@ const messages: Record<string, string> = {
   NOT_FOUND: 'This listing or contribution is unavailable.',
   INVALID_REQUEST: 'Check the fields and try again.',
   UNAUTHENTICATED: 'Sign in to continue.',
-  OWNER_ONLY: 'Only the site owner can moderate the directory.',
+  ADMIN_ONLY:
+    'Only admins can moderate venue visibility or view all contributions.',
+  VENUE_APPROVER_ONLY:
+    'Only admins and venue approvers can review submissions.',
   ORGANIZER_ONLY: 'Only the organizer can choose featured venues.',
   VERSION_CONFLICT:
     'This listing has a newer approved revision. Discard this suggestion and start from the current listing.',
@@ -50,6 +53,15 @@ export async function listVenues(page: number, signal?: AbortSignal) {
   return data(
     await client().GET('/venues', { params: { query: { page } }, signal }),
   )
+}
+export async function mapVenues(signal?: AbortSignal) {
+  const venues: Venue[] = []
+  for (let page = 0; page <= 1000; page++) {
+    const result = await listVenues(page, signal)
+    venues.push(...result.items)
+    if (!result.hasMore) return venues
+  }
+  throw new Error('Too many venues to load on the map safely.')
 }
 export async function getVenue(id: string, signal?: AbortSignal) {
   return data(

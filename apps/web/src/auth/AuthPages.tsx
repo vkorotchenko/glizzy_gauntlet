@@ -5,7 +5,14 @@ import {
   useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query'
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import {
+  Link,
+  Navigate,
+  NavLink,
+  Outlet,
+  useLocation,
+  useNavigate,
+} from 'react-router-dom'
 import {
   confirmLink,
   inspectLink,
@@ -14,7 +21,10 @@ import {
   renameProfile,
   requestEmail,
   startGoogle,
+  isAdmin,
+  canReviewVenues,
 } from './api'
+import { PageHeading } from '../PageHeading'
 
 function useSession() {
   return useQuery({
@@ -68,23 +78,25 @@ function EmailForm({ linking = false }: { linking?: boolean }) {
       <label htmlFor="email">
         {linking ? 'Email to link' : 'Email address'}
       </label>
-      <input
-        id="email"
-        name="email"
-        type="email"
-        autoComplete="email"
-        required
-        maxLength={254}
-        value={email}
-        onChange={(event) => setEmail(event.target.value)}
-      />
-      <button className="button" disabled={mutation.isPending}>
-        {mutation.isPending
-          ? 'Sending...'
-          : linking
-            ? 'Send linking email'
-            : 'Email me a sign-in link'}
-      </button>
+      <div className="inline-input-actions">
+        <input
+          id="email"
+          name="email"
+          type="email"
+          autoComplete="email"
+          required
+          maxLength={254}
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+        />
+        <button className="button" disabled={mutation.isPending}>
+          {mutation.isPending
+            ? 'Sending...'
+            : linking
+              ? 'Send linking email'
+              : 'Email me a sign-in link'}
+        </button>
+      </div>
       <ErrorMessage error={mutation.error} />
     </form>
   )
@@ -98,7 +110,17 @@ export function SignInPage() {
   return (
     <section className="auth-card">
       <span className="eyebrow">Pull up a seat</span>
-      <h1>Sign in to your crew.</h1>
+      <PageHeading title="Sign in to your crew.">
+        {session.data?.googleEnabled && (
+          <button
+            className="button secondary"
+            onClick={() => google.mutate()}
+            disabled={google.isPending}
+          >
+            Continue with Google
+          </button>
+        )}
+      </PageHeading>
       <p>
         Use a nickname for your public display name. Your email address is not
         public.
@@ -112,15 +134,7 @@ export function SignInPage() {
       <ErrorMessage error={session.error} />
       {session.data && (
         <>
-          {session.data.googleEnabled ? (
-            <button
-              className="button secondary"
-              onClick={() => google.mutate()}
-              disabled={google.isPending}
-            >
-              Continue with Google
-            </button>
-          ) : (
+          {!session.data.googleEnabled && (
             <p className="form-note">
               Google sign-in is not configured on this server yet.
             </p>
@@ -168,7 +182,7 @@ export function ConfirmLinkPage() {
   return (
     <section className="auth-card">
       <span className="eyebrow">One more step</span>
-      <h1>Confirm your email.</h1>
+      <PageHeading title="Confirm your email." />
       <p>
         Only continue if you requested this link and recognize the email address
         below.
@@ -222,20 +236,52 @@ function ProfileForm({ displayName }: { displayName: string }) {
       }}
     >
       <label htmlFor="display-name">Display name</label>
-      <input
-        id="display-name"
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-        required
-        maxLength={80}
-        autoComplete="nickname"
-      />
-      <button className="button" disabled={save.isPending}>
-        {save.isPending ? 'Saving...' : 'Save display name'}
-      </button>
+      <div className="inline-input-actions">
+        <input
+          id="display-name"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          required
+          maxLength={80}
+          autoComplete="nickname"
+        />
+        <button className="button" disabled={save.isPending}>
+          {save.isPending ? 'Saving...' : 'Save display name'}
+        </button>
+      </div>
       {save.isSuccess && <p role="status">Display name saved.</p>}
       <ErrorMessage error={save.error} />
     </form>
+  )
+}
+
+export function AccountLayout() {
+  const session = useSession()
+  return (
+    <div className="account-layout">
+      {session.data?.user && (
+        <nav className="account-tabs" aria-label="Account navigation">
+          <NavLink className="account-tab" to="/account" end>
+            Profile settings
+          </NavLink>
+          <NavLink className="account-tab" to="/account/contributions">
+            My venues
+          </NavLink>
+          <NavLink className="account-tab" to="/account/competitions">
+            My competitions
+          </NavLink>
+          <NavLink className="account-tab" to="/account/meals">
+            My feed
+          </NavLink>
+          {isAdmin(session.data.user) && (
+            <NavLink className="account-tab" to="/account/roles">
+              Role management
+            </NavLink>
+          )}
+        </nav>
+      )}
+      <Outlet />
+    </div>
   )
 }
 
@@ -256,7 +302,18 @@ export function AccountPage() {
   return (
     <section className="auth-card">
       <span className="eyebrow">Your corner of the table</span>
-      <h1>Your account</h1>
+      <PageHeading title="Your account">
+        {user && (
+          <button
+            className="text-button"
+            disabled={signOut.isPending}
+            onClick={() => signOut.mutate()}
+          >
+            Sign out
+          </button>
+        )}
+      </PageHeading>
+      <ErrorMessage error={signOut.error} />
       {session.isPending && <p role="status">Loading your account...</p>}
       <ErrorMessage error={session.error} />
       {session.data && !user && (
@@ -275,6 +332,21 @@ export function AccountPage() {
             </p>
           )}
           <ProfileForm key={user.id} displayName={user.displayName} />
+          {canReviewVenues(user) && (
+            <>
+              <h2>Venue moderation</h2>
+              <div className="competition-actions">
+                <Link className="text-link" to="/account/contributions/review">
+                  Review queue
+                </Link>
+                {isAdmin(user) && (
+                  <Link className="text-link" to="/account/contributions/all">
+                    All contributions
+                  </Link>
+                )}
+              </div>
+            </>
+          )}
           <h2>Sign-in methods</h2>
           <p>
             {user.providers
@@ -300,15 +372,14 @@ export function AccountPage() {
             merged automatically.
           </p>
           <p className="account-id">Account ID: {user.id}</p>
-          {user.siteOwner && <p className="form-notice">Site owner</p>}
-          <button
-            className="text-button"
-            disabled={signOut.isPending}
-            onClick={() => signOut.mutate()}
-          >
-            Sign out
-          </button>
-          <ErrorMessage error={signOut.error} />
+          {user.roles?.length > 0 && (
+            <p className="form-notice">
+              Global roles:{' '}
+              {user.roles
+                .map((role) => (role === 'ADMIN' ? 'Admin' : 'Venue approver'))
+                .join(', ')}
+            </p>
+          )}
         </>
       )}
     </section>

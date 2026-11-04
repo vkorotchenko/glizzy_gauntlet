@@ -5,6 +5,60 @@ info:
 servers:
   - url: /api/v1
 paths:
+  /admin/accounts:
+    get:
+      operationId: listRoleAccounts
+      description: Admin-only paginated account directory for assigning global roles. Returns display names and account IDs, never email addresses. Role checks use current database grants, not cached session authority.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - name: query
+          in: query
+          schema: { type: string, maxLength: 80, default: '' }
+      responses:
+        '200':
+          description: Up to 20 matching accounts, never publicly cacheable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleAccountPage'
+        default:
+          $ref: '#/components/responses/AuthError'
+  /admin/accounts/{id}/roles/{role}:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+      - name: role
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/GlobalRole'
+    put:
+      operationId: grantGlobalRole
+      description: Admin-only idempotent grant. Actual changes record the actor and target account in an audit event. Account IDs are authoritative; email is never a role rule.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Updated account roles, never publicly cacheable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleAccount'
+        default:
+          $ref: '#/components/responses/AuthError'
+    delete:
+      operationId: revokeGlobalRole
+      description: Admin-only idempotent, audited revocation. Cannot revoke the last Admin. Mutations serialize and recheck caller authority under the lock so revoked or concurrent requests cannot bypass this rule.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Updated account roles, never publicly cacheable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleAccount'
+        default:
+          $ref: '#/components/responses/AuthError'
   /feed:
     get:
       operationId: getCompetitorFeed
@@ -267,7 +321,7 @@ paths:
         - $ref: '#/components/parameters/Page'
       responses:
         '200':
-          description: Public only for published public competitions; otherwise competition visibility applies. Twenty participants per page. Rank uses inches alone (1, 1, 3); active members with no submissions score zero. After finalization, serves the latest immutable result rankings and frozen display names. No account IDs or meal details.
+          description: Public only for published public competitions; otherwise competition visibility applies. Twenty participants per page. COUNT ranks by whole hot dogs; LENGTH and BOTH rank by inches alone. Equal tracked totals share a rank (1, 1, 3); active members with no submissions score zero. After finalization, serves the latest immutable result rankings and frozen display names. No account IDs or meal details.
           content:
             application/json:
               schema:
@@ -406,6 +460,7 @@ paths:
   /venues:
     get:
       operationId: listVenues
+      description: Signed-in approved venue directory. The map aggregates its pages; guests cannot access venue data.
       parameters:
         - $ref: '#/components/parameters/Page'
         - {
@@ -444,7 +499,7 @@ paths:
       operationId: getVenue
       responses:
         '200':
-          description: Current approved public venue revision only
+          description: Signed-in access to the current approved venue revision only
           content:
             application/json:
               schema:
@@ -484,7 +539,7 @@ paths:
           schema: { type: string, enum: [mine, pending, all], default: mine }
       responses:
         '200':
-          description: Own contribution history, or site-owner-only pending queue/all contribution history
+          description: Own contribution history, Admin or Venue approver pending queue, or Admin-only all-contribution history
           content:
             application/json:
               schema:
@@ -517,7 +572,7 @@ paths:
       operationId: getDirectoryContribution
       responses:
         '200':
-          description: Contributor or site-owner view, never public
+          description: Contributor or Admin view; Venue approvers may inspect submitted/reviewed contributions, never another account's draft. Never public.
           content:
             application/json:
               schema:
@@ -613,7 +668,7 @@ paths:
           schema: { type: boolean, default: false }
       responses:
         '200':
-          description: Reencoded image only; public only when associated with a currently visible approved venue revision; otherwise contributor/site owner only, always no-store
+          description: Authentication required. Current approved images are visible to signed-in accounts. Other images require contributor or Admin access; Venue approvers may inspect submitted/reviewed images, never another account's draft. Always no-store.
           content:
             image/jpeg:
               schema: { type: string, format: binary }
@@ -624,6 +679,7 @@ paths:
       - $ref: '#/components/parameters/CompetitionId'
     get:
       operationId: listFeaturedVenues
+      description: Signed-in access only; competition visibility still applies.
       responses:
         '200':
           description: Approved visible featured venues, with the competition's draft/private access rules
@@ -669,11 +725,11 @@ paths:
           in: query
           schema:
             type: string
-            enum: [public, mine]
+            enum: [public, mine, joined, administered, participating]
             default: public
       responses:
         '200':
-          description: Published public competitions, or the signed-in user's active memberships and drafts
+          description: Public discovery includes the permanent all-time competition. Mine includes active memberships and drafts; joined excludes drafts. Administered lists the account's organized ordinary competitions and all-time for global Admins, even when opted out. Participating lists other active memberships without duplicates. All-time appears first; private scopes require sign-in.
           content:
             application/json:
               schema:
@@ -697,7 +753,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CompetitionSettings'
+              $ref: '#/components/schemas/CompetitionCreation'
       responses:
         '201':
           $ref: '#/components/responses/Competition'
@@ -774,6 +830,19 @@ paths:
           $ref: '#/components/responses/Competition'
         default:
           $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/leave:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    post:
+      operationId: leaveAllTimeCompetition
+      description: Authenticated, CSRF-protected opt-out from the all-time competition. Withdraws only this user's entries in that competition; private source meals and other competitions stay unchanged. Rejoining is explicit and does not restore old submissions automatically. Ordinary competitions do not support this action.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          $ref: '#/components/responses/Competition'
+        default:
+          $ref: '#/components/responses/CompetitionError'
   /competitions/{id}/members:
     parameters:
       - $ref: '#/components/parameters/CompetitionId'
@@ -827,6 +896,39 @@ paths:
       responses:
         '204':
           description: Excluded from joining and member access; action and reason audited
+        default:
+          $ref: '#/components/responses/CompetitionError'
+  /competitions/{id}/invitation-emails:
+    parameters:
+      - $ref: '#/components/parameters/CompetitionId'
+    get:
+      operationId: listCompetitionInvitationEmails
+      description: Organizer-only recipient addresses and delivery status, including queued draft invitations. Responses are no-store; addresses never appear in competition metadata or member views.
+      responses:
+        '200':
+          description: Queued and attempted invitations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CompetitionInvitationEmail'
+        default:
+          $ref: '#/components/responses/CompetitionError'
+    post:
+      operationId: sendCompetitionInvitationEmails
+      description: Organizer-only background send/retry of pending or failed email invitations after publication and before eating ends. Already-sent rows are skipped. Publication queues this automatically. Poll the GET endpoint for delivery status. Pending recipients remain saved if the bounded worker queue is busy or interrupted and can be retried manually. Delivery uses the existing SMTP configuration and reusable, revocable links; SMTP acceptance is not inbox delivery. Limited to 100 attempts/hour globally, 40/organizer, 5/address, and a one-minute address cooldown. The existing 20 active-link limit applies; failed-send links are revoked.
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Current per-recipient status after queuing background delivery; individual delivery failures do not undo publication
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CompetitionInvitationEmail'
         default:
           $ref: '#/components/responses/CompetitionError'
   /competitions/{id}/invitations:
@@ -1279,7 +1381,7 @@ components:
           minimum: 1
           description: Current competition-entry version, not source or result version
         totalHundredths:
-          { type: integer, format: int64, minimum: 1, maximum: 20199980 }
+          { type: integer, format: int64, minimum: 0, maximum: 20199980 }
         wholeHotDogs: { type: integer, minimum: 0, maximum: 2000 }
         excluded:
           type: boolean
@@ -1340,13 +1442,21 @@ components:
     ProgressDay:
       type: object
       required:
-        [date, totalHundredths, wholeHotDogs, mealCount, cumulativeHundredths]
+        [
+          date,
+          totalHundredths,
+          wholeHotDogs,
+          mealCount,
+          cumulativeHundredths,
+          cumulativeWholeHotDogs,
+        ]
       properties:
         date: { type: string, format: date }
         totalHundredths: { type: integer, format: int64, minimum: 0 }
         wholeHotDogs: { type: integer, format: int64, minimum: 0 }
         mealCount: { type: integer, format: int64, minimum: 0 }
         cumulativeHundredths: { type: integer, format: int64, minimum: 0 }
+        cumulativeWholeHotDogs: { type: integer, format: int64, minimum: 0 }
     ProgressPlace:
       type: object
       required: [venueId, location, mealCount, totalHundredths]
@@ -1364,7 +1474,7 @@ components:
         revisionId: { type: string, format: uuid }
         eatenAt: { type: string, format: date-time }
         location: { type: string }
-        totalHundredths: { type: integer, format: int64, minimum: 1 }
+        totalHundredths: { type: integer, format: int64, minimum: 0 }
         wholeHotDogs: { type: integer, format: int64, minimum: 0 }
     PersonalProgress:
       type: object
@@ -1471,30 +1581,40 @@ components:
     MealContent:
       type: object
       additionalProperties: false
-      required: [eatenAt, location, notes, items, photoIds]
+      required: [notes, items, photoIds]
       properties:
         eatenAt:
           {
             type: string,
             format: date-time,
-            description: Nonfuture instant since 1970,
-            at most millisecond precision,
+            description: Optional nonfuture instant since 1970 with at most millisecond precision; defaults to database time when omitted,
           }
         venueId: { type: string, format: uuid, nullable: true }
         location:
           {
             type: string,
             maxLength: 300,
-            description: Private free-text label,
-            required when venueId is absent; empty when venueId is selected,
+            description: Optional private free-text label; empty or omitted when venueId is selected,
           }
         notes: { type: string, maxLength: 2000 }
         items:
           type: array
-          minItems: 1
+          minItems: 0
           maxItems: 20
+          description: Legacy measured item lines. For simple logging send an empty array and explicit totalHundredths and wholeHotDogs instead. Do not mix the two formats.
           items:
             $ref: '#/components/schemas/MealItem'
+        totalHundredths:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 20199980
+          description: Total measured inches in hundredths, not length per hot dog. Required with empty items; use zero for count-only logging.
+        wholeHotDogs:
+          type: integer
+          minimum: 0
+          maximum: 2000
+          description: Required with empty items; use zero for length-only logging. At least one total must be positive. COUNT targets require a positive count; LENGTH and BOTH targets require positive inches.
         photoIds:
           type: array
           maxItems: 5
@@ -1559,7 +1679,7 @@ components:
         photoIds:
           type: array
           items: { type: string, format: uuid }
-        totalHundredths: { type: integer, format: int64, minimum: 1 }
+        totalHundredths: { type: integer, format: int64, minimum: 0 }
         wholeHotDogs: { type: integer, minimum: 0 }
     MealSubmission:
       type: object
@@ -1700,6 +1820,51 @@ components:
           items:
             $ref: '#/components/schemas/Contribution'
         hasMore: { type: boolean }
+    CompetitionCreation:
+      type: object
+      additionalProperties: false
+      required:
+        [name, rules, visibility, timeZone, startsAt, endsAt, allowSharedMeals]
+      properties:
+        name:
+          $ref: '#/components/schemas/CompetitionSettings/properties/name'
+        rules:
+          $ref: '#/components/schemas/CompetitionSettings/properties/rules'
+        visibility:
+          $ref: '#/components/schemas/CompetitionSettings/properties/visibility'
+        timeZone:
+          $ref: '#/components/schemas/CompetitionSettings/properties/timeZone'
+        startsAt:
+          $ref: '#/components/schemas/CompetitionSettings/properties/startsAt'
+        endsAt:
+          $ref: '#/components/schemas/CompetitionSettings/properties/endsAt'
+        allowSharedMeals:
+          $ref: '#/components/schemas/CompetitionSettings/properties/allowSharedMeals'
+        trackingMode:
+          $ref: '#/components/schemas/CompetitionSettings/properties/trackingMode'
+        invitationEmails:
+          type: array
+          maxItems: 20
+          description: Optional recipients, normalized and deduplicated case-insensitively. Stored privately until publication; no accounts or memberships are created. Requires configured email delivery. Omit or send an empty array for no emails.
+          items: { type: string, format: email, minLength: 1, maxLength: 254 }
+    CompetitionInvitationEmail:
+      type: object
+      required: [id, email, status, lastError, sentAt]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        status: { type: string, enum: [PENDING, SENT, FAILED] }
+        lastError:
+          type: string
+          nullable: true
+          enum:
+            [
+              EMAIL_DISABLED,
+              EMAIL_RATE_LIMIT,
+              INVITATION_LIMIT,
+              DELIVERY_FAILED,
+            ]
+        sentAt: { type: string, format: date-time, nullable: true }
     CompetitionSettings:
       type: object
       additionalProperties: false
@@ -1730,6 +1895,11 @@ components:
           description: ISO 8601 instant after the start, at most millisecond precision
         allowSharedMeals:
           type: boolean
+        trackingMode:
+          type: string
+          enum: [COUNT, LENGTH, BOTH]
+          default: BOTH
+          description: Count ranks by whole hot dogs; length and both rank by inches without a count tie-breaker. Defaults to BOTH for existing clients. Locks with all other settings when eating starts.
     Competition:
       type: object
       additionalProperties: false
@@ -1743,11 +1913,14 @@ components:
           startsAt,
           endsAt,
           allowSharedMeals,
+          trackingMode,
           submissionClosesAt,
+          allTime,
           published,
           version,
           phase,
           viewerRole,
+          canAdminister,
           memberCount,
         ]
       properties:
@@ -1765,14 +1938,21 @@ components:
         endsAt:
           type: string
           format: date-time
+          nullable: true
         allowSharedMeals:
           type: boolean
+        trackingMode:
+          $ref: '#/components/schemas/CompetitionSettings/properties/trackingMode'
         id:
           type: string
           format: uuid
         submissionClosesAt:
           type: string
           format: date-time
+          nullable: true
+        allTime:
+          type: boolean
+          description: Permanent count leaderboard administered by global Admins, independently of participation. Accounts join by default; leaving withdraws their shared entries and is respected on later sign-ins. No end or submission cutoff; its lifetime settings remain locked.
         published:
           type: boolean
         version:
@@ -1784,6 +1964,10 @@ components:
         viewerRole:
           type: string
           enum: [NONE, MEMBER, ORGANIZER]
+          description: Active participation role. An opted-out global Admin has NONE on all-time but can still administer it.
+        canAdminister:
+          type: boolean
+          description: True for the active organizer of an ordinary competition or a global Admin on all-time, including opted-out Admins. Does not grant access to unjoined meal details or other accounts' private competitions.
         memberCount:
           type: integer
     CompetitionMember:
@@ -1800,7 +1984,7 @@ components:
           enum: [MEMBER, ORGANIZER]
         status:
           type: string
-          enum: [ACTIVE, EXCLUDED]
+          enum: [ACTIVE, EXCLUDED, LEFT]
     CompetitionInvitation:
       type: object
       required: [id, createdAt, expiresAt, revokedAt, active]
@@ -1849,6 +2033,7 @@ components:
         endsAt:
           type: string
           format: date-time
+          nullable: true
         allowSharedMeals:
           type: boolean
         expiresAt:
@@ -1860,10 +2045,33 @@ components:
       properties:
         error:
           type: string
+    GlobalRole:
+      type: string
+      enum: [ADMIN, VENUE_APPROVER]
+    RoleAccount:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, roles]
+      properties:
+        id: { type: string, format: uuid }
+        displayName: { type: string }
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/GlobalRole'
+    RoleAccountPage:
+      type: object
+      required: [items, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleAccount'
+        hasMore: { type: boolean }
     Profile:
       type: object
       additionalProperties: false
-      required: [id, displayName, siteOwner, providers]
+      required: [id, displayName, siteOwner, providers, roles]
       properties:
         id:
           type: string
@@ -1872,6 +2080,14 @@ components:
           type: string
         siteOwner:
           type: boolean
+          deprecated: true
+          readOnly: true
+          description: Compatibility alias for the Admin role. Permissions are stored only in account_roles; new clients must use roles.
+        roles:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/GlobalRole'
         providers:
           type: array
           items:

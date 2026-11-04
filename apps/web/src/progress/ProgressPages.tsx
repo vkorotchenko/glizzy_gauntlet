@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { loadSession } from '../auth/api'
-import { getCompetition } from '../competitions/api'
+import { PageHeading } from '../PageHeading'
+import { getCompetition, type TrackingMode } from '../competitions/api'
 import { formatTime } from '../competitions/time'
 import { formatInches } from '../meals/measurement'
 import * as api from './api'
@@ -29,9 +30,11 @@ function ErrorNotice({
 export function ResultsTable({
   items,
   caption,
+  trackingMode = 'BOTH',
 }: {
   items: api.Standing[]
   caption: string
+  trackingMode?: TrackingMode
 }) {
   return (
     <div
@@ -46,8 +49,8 @@ export function ResultsTable({
           <tr>
             <th scope="col">Rank</th>
             <th scope="col">Display name</th>
-            <th scope="col">Inches</th>
-            <th scope="col">Whole hot dogs</th>
+            {trackingMode !== 'COUNT' && <th scope="col">Inches</th>}
+            {trackingMode !== 'LENGTH' && <th scope="col">Whole hot dogs</th>}
           </tr>
         </thead>
         <tbody>
@@ -55,8 +58,10 @@ export function ResultsTable({
             <tr key={index}>
               <td>{row.rank}</td>
               <th scope="row">{row.displayName}</th>
-              <td>{formatInches(row.totalHundredths)}</td>
-              <td>{row.wholeHotDogs}</td>
+              {trackingMode !== 'COUNT' && (
+                <td>{formatInches(row.totalHundredths)}</td>
+              )}
+              {trackingMode !== 'LENGTH' && <td>{row.wholeHotDogs}</td>}
             </tr>
           ))}
         </tbody>
@@ -65,7 +70,15 @@ export function ResultsTable({
   )
 }
 
-export function Standings({ id }: { id: string }) {
+export function Standings({
+  id,
+  trackingMode = 'BOTH',
+  allTime = false,
+}: {
+  id: string
+  trackingMode?: TrackingMode
+  allTime?: boolean
+}) {
   const [page, setPage] = useState(0)
   const results = useQuery({
     queryKey: ['meals', 'standings', id, page],
@@ -76,15 +89,20 @@ export function Standings({ id }: { id: string }) {
     <section className="competition-section" aria-label="Competition standings">
       <h2>Standings</h2>
       <p>
-        Ranked by inches alone. Equal totals share a rank (1, 1, 3); whole hot
-        dogs are not a tie-breaker. Current members with no submissions score
-        zero. Former members' retained submissions still count.
+        Ranked by {trackingMode === 'COUNT' ? 'hot dog count' : 'inches'} alone.
+        Equal totals share a rank (1, 1, 3); other measurements never break
+        ties. Current members with no submissions score zero. Former members'
+        retained submissions still count.
       </p>
       {results.isPending && <p role="status">Loading standings...</p>}
       <ErrorNotice error={results.error} retry={() => void results.refetch()} />
       {results.data && !results.isError && (
         <>
-          {results.data.provisional ? (
+          {allTime ? (
+            <p className="form-notice">
+              Live all-time standings. This leaderboard has no end date.
+            </p>
+          ) : results.data.provisional ? (
             <p className="form-notice">
               Provisional standings. Closed submissions are not a finalized
               recap.
@@ -97,10 +115,13 @@ export function Standings({ id }: { id: string }) {
           )}
           <ResultsTable
             items={results.data.items}
+            trackingMode={trackingMode}
             caption={
-              results.data.provisional
-                ? 'Provisional standings'
-                : 'Final standings'
+              allTime
+                ? 'Live all-time standings'
+                : results.data.provisional
+                  ? 'Provisional standings'
+                  : 'Final standings'
             }
           />
           {!results.data.items.length && <p>No participants on this page.</p>}
@@ -136,10 +157,28 @@ export function Standings({ id }: { id: string }) {
   )
 }
 
-function DailyChart({ days, zone }: { days: api.Day[]; zone: string }) {
+function DailyChart({
+  days,
+  zone,
+  trackingMode,
+}: {
+  days: api.Day[]
+  zone: string
+  trackingMode: TrackingMode
+}) {
   const [mode, setMode] = useState<'daily' | 'cumulative'>('daily')
+  const countOnly = trackingMode === 'COUNT'
+  const unit = countOnly ? 'hot dogs' : 'inches'
+  const display = (amount: number) =>
+    countOnly ? String(amount) : formatInches(amount)
   const value = (day: api.Day) =>
-    mode === 'daily' ? day.totalHundredths : day.cumulativeHundredths
+    countOnly
+      ? mode === 'daily'
+        ? day.wholeHotDogs
+        : day.cumulativeWholeHotDogs
+      : mode === 'daily'
+        ? day.totalHundredths
+        : day.cumulativeHundredths
   const maximum = Math.max(1, ...days.map(value))
   const points = days
     .map(
@@ -149,7 +188,7 @@ function DailyChart({ days, zone }: { days: api.Day[]; zone: string }) {
     .join(' ')
   return (
     <>
-      <h2>Daily and cumulative inches</h2>
+      <h2>Daily and cumulative {unit}</h2>
       <p>
         Calendar days in {zone}. Zero days are included; cumulative totals
         include earlier pages.
@@ -176,14 +215,13 @@ function DailyChart({ days, zone }: { days: api.Day[]; zone: string }) {
         <>
           <figure className="progress-chart">
             <figcaption>
-              {mode === 'daily' ? 'Daily' : 'Cumulative'} inches: {days[0].date}{' '}
-              to {days.at(-1)!.date}. Chart maximum: {formatInches(maximum)}{' '}
-              inches.
+              {mode === 'daily' ? 'Daily' : 'Cumulative'} {unit}: {days[0].date}{' '}
+              to {days.at(-1)!.date}. Chart maximum: {display(maximum)} {unit}.
             </figcaption>
             <svg
               viewBox="0 0 600 180"
               role="img"
-              aria-label={`${mode === 'daily' ? 'Daily' : 'Cumulative'} inches in ${zone}; exact values in the table below`}
+              aria-label={`${mode === 'daily' ? 'Daily' : 'Cumulative'} ${unit} in ${zone}; exact values in the table below`}
             >
               <path d="M10 10 V160 H590" fill="none" stroke="currentColor" />
               <polyline
@@ -213,9 +251,14 @@ function DailyChart({ days, zone }: { days: api.Day[]; zone: string }) {
               <thead>
                 <tr>
                   <th scope="col">Date</th>
-                  <th scope="col">Inches</th>
-                  <th scope="col">Cumulative inches</th>
-                  <th scope="col">Whole hot dogs</th>
+                  {trackingMode !== 'COUNT' && <th scope="col">Inches</th>}
+                  {trackingMode !== 'COUNT' && (
+                    <th scope="col">Cumulative inches</th>
+                  )}
+                  {trackingMode !== 'LENGTH' && (
+                    <th scope="col">Whole hot dogs</th>
+                  )}
+                  {countOnly && <th scope="col">Cumulative hot dogs</th>}
                   <th scope="col">Meals</th>
                 </tr>
               </thead>
@@ -225,9 +268,14 @@ function DailyChart({ days, zone }: { days: api.Day[]; zone: string }) {
                     <th scope="row">
                       <time dateTime={day.date}>{day.date}</time>
                     </th>
-                    <td>{formatInches(day.totalHundredths)}</td>
-                    <td>{formatInches(day.cumulativeHundredths)}</td>
-                    <td>{day.wholeHotDogs}</td>
+                    {trackingMode !== 'COUNT' && (
+                      <td>{formatInches(day.totalHundredths)}</td>
+                    )}
+                    {trackingMode !== 'COUNT' && (
+                      <td>{formatInches(day.cumulativeHundredths)}</td>
+                    )}
+                    {trackingMode !== 'LENGTH' && <td>{day.wholeHotDogs}</td>}
+                    {countOnly && <td>{day.cumulativeWholeHotDogs}</td>}
                     <td>{day.mealCount}</td>
                   </tr>
                 ))}
@@ -242,7 +290,13 @@ function DailyChart({ days, zone }: { days: api.Day[]; zone: string }) {
   )
 }
 
-function PersonalProgress({ id }: { id: string }) {
+function PersonalProgress({
+  id,
+  trackingMode,
+}: {
+  id: string
+  trackingMode: TrackingMode
+}) {
   const [dayPage, setDayPage] = useState(0)
   const [placePage, setPlacePage] = useState(0)
   const result = useQuery({
@@ -272,10 +326,18 @@ function PersonalProgress({ id }: { id: string }) {
             className="competition-facts"
             aria-label="Your competition totals"
           >
-            <dt>Inches</dt>
-            <dd>{formatInches(view.totalHundredths)}</dd>
-            <dt>Whole hot dogs</dt>
-            <dd>{view.wholeHotDogs}</dd>
+            {trackingMode !== 'COUNT' && (
+              <>
+                <dt>Inches</dt>
+                <dd>{formatInches(view.totalHundredths)}</dd>
+              </>
+            )}
+            {trackingMode !== 'LENGTH' && (
+              <>
+                <dt>Whole hot dogs</dt>
+                <dd>{view.wholeHotDogs}</dd>
+              </>
+            )}
             <dt>Current rank</dt>
             <dd>{view.rank} (ties share a rank)</dd>
             <dt>Submitted meals</dt>
@@ -293,7 +355,11 @@ function PersonalProgress({ id }: { id: string }) {
             Refresh progress
           </button>
           <section className="competition-section">
-            <DailyChart days={view.days} zone={view.timeZone} />
+            <DailyChart
+              days={view.days}
+              zone={view.timeZone}
+              trackingMode={trackingMode}
+            />
             <div className="page-controls">
               <button
                 type="button"
@@ -327,8 +393,9 @@ function PersonalProgress({ id }: { id: string }) {
                 <li key={index}>
                   <strong>{place.location}</strong> /{' '}
                   {place.venueId ? 'Directory venue' : 'Private label'} /{' '}
-                  {place.mealCount} meals /{' '}
-                  {formatInches(place.totalHundredths)} inches
+                  {place.mealCount} meals
+                  {trackingMode !== 'COUNT' &&
+                    ` / ${formatInches(place.totalHundredths)} inches`}
                 </li>
               ))}
             </ul>
@@ -362,10 +429,15 @@ function PersonalProgress({ id }: { id: string }) {
             <ul className="member-list">
               {view.recentMeals.map((meal) => (
                 <li key={meal.mealId}>
-                  <strong>{formatInches(meal.totalHundredths)} inches</strong> /{' '}
-                  {meal.wholeHotDogs} whole hot dogs
+                  {trackingMode !== 'COUNT' && (
+                    <strong>{formatInches(meal.totalHundredths)} inches</strong>
+                  )}
+                  {trackingMode === 'BOTH' && ' / '}
+                  {trackingMode !== 'LENGTH' &&
+                    `${meal.wholeHotDogs} whole hot dogs`}
                   <p>
-                    {formatTime(meal.eatenAt, view.timeZone)} / {meal.location}
+                    {formatTime(meal.eatenAt, view.timeZone)}
+                    {meal.location && ` / ${meal.location}`}
                   </p>
                   <Link to={`/meals/${meal.mealId}`}>View private source</Link>
                 </li>
@@ -394,7 +466,7 @@ export function ProgressPage() {
   return (
     <section className="competition-page">
       <Link to={`/competitions/${id}`}>Back to competition</Link>
-      <h1>My competition progress</h1>
+      <PageHeading title="My competition progress" />
       <p>
         Only your nonwithdrawn submission snapshots in this competition count
         here. Private source edits and other competitions do not change these
@@ -420,7 +492,11 @@ export function ProgressPage() {
               {competition.data.viewerRole === 'NONE' ? (
                 <p>Join this competition to view your own progress.</p>
               ) : (
-                <PersonalProgress key={id} id={id} />
+                <PersonalProgress
+                  key={id}
+                  id={id}
+                  trackingMode={competition.data.trackingMode}
+                />
               )}
             </>
           )}

@@ -6,10 +6,14 @@ import App from '../App'
 import type { Contribution, Venue } from './api'
 
 vi.mock('./VenueMap', () => ({
-  default: () => (
-    <p role="status">
-      Map unavailable. All venues are still in the list below.
-    </p>
+  default: ({ venues }: { venues: Venue[] }) => (
+    <div role="region" aria-label="Approved venue map">
+      {venues.map((item) => (
+        <a key={item.id} href={`/venues/${item.id}`}>
+          {item.name}
+        </a>
+      ))}
+    </div>
   ),
 }))
 
@@ -18,6 +22,7 @@ const session = {
     id: '00000000-0000-4000-8000-000000000001',
     displayName: 'Fan',
     siteOwner: false,
+    roles: [],
     providers: ['email'],
   },
   csrfToken: 'test-csrf',
@@ -59,23 +64,34 @@ function show(path: string) {
 }
 
 describe('directory screens', () => {
-  it('keeps the approved list usable when the optional map fails, without requesting private contributions', async () => {
+  it('always shows a map containing every venue page without directory or contribution toggles', async () => {
     const fetch = vi.fn(async (request: Request) => {
-      if (request.url.endsWith('/auth/session'))
-        return Response.json({ ...session, user: null })
+      if (request.url.endsWith('/auth/session')) return Response.json(session)
       if (request.url.includes('/venues?'))
-        return Response.json({ items: [venue], hasMore: false })
-      throw new Error('Public browsing must not request private contributions')
+        return Response.json(
+          new URL(request.url).searchParams.get('page') === '0'
+            ? { items: [venue], hasMore: true }
+            : {
+                items: [{ ...venue, id: 'second-venue', name: 'Second stand' }],
+                hasMore: false,
+              },
+        )
+      throw new Error('The map must not request private contributions')
     })
     vi.stubGlobal('fetch', fetch)
     show('/venues')
-    expect(await screen.findByRole('link', { name: venue.name })).toBeVisible()
-    expect(screen.queryByText(/Map unavailable/)).not.toBeInTheDocument()
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Load map (external tiles)' }),
-    )
-    expect(await screen.findByText(/Map unavailable/)).toBeVisible()
-    expect(screen.getByRole('link', { name: venue.name })).toBeVisible()
+    expect(
+      await screen.findByRole('link', { name: 'Second stand' }),
+    ).toBeVisible()
+    expect(
+      screen.getByRole('region', { name: 'Approved venue map' }),
+    ).toBeVisible()
+    expect(
+      screen.queryByRole('button', {
+        name: /map|Approved venues|My contributions/i,
+      }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('article')).not.toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: 'Review queue' }),
     ).not.toBeInTheDocument()
@@ -84,6 +100,36 @@ describe('directory screens', () => {
         request.url.includes('/contributions'),
       ),
     ).toBe(false)
+  })
+
+  it.each(['/venues', `/venues/${venue.id}`, '/account/contributions'])(
+    'gates %s without fetching private venue data for guests',
+    async (path) => {
+      const fetch = vi.fn(async (request: Request) => {
+        expect(request.url).toMatch(/auth\/session$/)
+        return Response.json({ ...session, user: null })
+      })
+      vi.stubGlobal('fetch', fetch)
+      show(path)
+      expect(
+        await screen.findByRole('heading', { name: 'Sign in to continue' }),
+      ).toBeVisible()
+      expect(fetch).toHaveBeenCalledOnce()
+    },
+  )
+
+  it('includes personal venues and competitions in the account navigation', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(session)),
+    )
+    show('/account')
+    expect(
+      await screen.findByRole('link', { name: 'My venues' }),
+    ).toHaveAttribute('href', '/account/contributions')
+    expect(
+      screen.getByRole('link', { name: 'My competitions' }),
+    ).toHaveAttribute('href', '/account/competitions')
   })
 
   it('creates a private draft without automatically submitting it for public review', async () => {
@@ -140,7 +186,7 @@ describe('directory screens', () => {
         if (request.url.endsWith('/auth/session'))
           return Response.json({
             ...session,
-            user: { ...session.user, siteOwner: true },
+            user: { ...session.user, siteOwner: true, roles: ['ADMIN'] },
           })
         if (request.url.endsWith('/review')) {
           expect(request.headers.get('X-CSRF-TOKEN')).toBe('test-csrf')

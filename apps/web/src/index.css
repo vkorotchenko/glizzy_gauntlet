@@ -342,6 +342,40 @@ h3 {
   font-weight: 700;
   text-underline-offset: 4px;
 }
+.account-layout {
+  padding-top: 32px;
+  margin-bottom: 80px;
+}
+.account-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  border-bottom: 1px solid #dfd4c2;
+}
+.account-tab {
+  padding: 14px 12px;
+  border-bottom: 3px solid transparent;
+  border-radius: 6px 6px 0 0;
+  background: #fffaf0;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+}
+.account-tab:hover {
+  background: #efe5d2;
+}
+.account-tab[aria-current='page'] {
+  border-bottom-color: #a73228;
+  color: #84261f;
+  background: #f3e7cf;
+}
+.account-layout .auth-card {
+  margin: 32px auto 0;
+}
+.account-layout .competition-page {
+  padding-bottom: 0;
+}
 .auth-card {
   max-width: 600px;
   margin: 56px auto 80px;
@@ -393,6 +427,20 @@ h3 {
   opacity: 0.6;
   cursor: wait;
 }
+.inline-input-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.inline-input-actions > input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.inline-input-actions > .button {
+  flex: 0 0 auto;
+  margin: 0 0 0 auto;
+}
 .secondary {
   background: #efe5d2;
   color: #38281d;
@@ -422,6 +470,9 @@ h3 {
   text-underline-offset: 4px;
 }
 @media (max-width: 760px) {
+  .account-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .auth-card {
     padding: 22px;
     margin: 32px auto;
@@ -446,12 +497,50 @@ h3 {
   margin-top: 0;
   padding: 10px 18px;
 }
+.header-links > a {
+  position: relative;
+  text-decoration: none;
+}
+.header-links > a[aria-current='page']::after {
+  content: '';
+  position: absolute;
+  height: 3px;
+  border-radius: 2px;
+  background: #a73228;
+  bottom: -10px;
+  inset-inline: 0;
+}
+.header-links > a:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
 .feed-page {
   max-width: 780px;
 }
 .meal-feed {
   display: grid;
   gap: 24px;
+}
+.sample-meal-image {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  border-radius: 8px;
+  margin: 20px 0;
+}
+
+.tutorial-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.tutorial-link:hover h3,
+.tutorial-link:focus-visible h3 {
+  text-decoration: underline;
+}
+.sample-feed {
+  margin: 28px 0;
 }
 .feed-welcome {
   margin-bottom: 40px;
@@ -482,11 +571,21 @@ h3 {
 }
 .feed-card-actions {
   flex-wrap: wrap;
+  justify-content: space-between;
   border-top: 1px solid #dfd4c2;
   padding-top: 20px;
   margin-top: 20px;
 }
-.glizzy-button {
+.feed-card-actions .meal-totals {
+  margin: 0;
+}
+.feed-card-likes {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+.like-button {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -498,11 +597,11 @@ h3 {
   font: inherit;
   font-weight: 700;
 }
-.glizzy-button[aria-pressed='true'] {
+.like-button[aria-pressed='true'] {
   background: #a13227;
   color: #fffaf0;
 }
-.glizzy-button:focus-visible {
+.like-button:focus-visible {
   outline: 3px solid #18583d;
   outline-offset: 3px;
 }
@@ -531,6 +630,45 @@ h3 {
   align-items: center;
   gap: 20px;
   margin: 24px 0;
+}
+.competition-actions {
+  justify-content: flex-end;
+}
+.competition-actions > :is(.button, .text-link) {
+  margin-top: 0;
+}
+.page-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin: 20px 0;
+}
+.page-heading > :is(h1, h2) {
+  flex: 1 1 260px;
+  min-width: 0;
+  margin: 0;
+}
+.page-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  max-width: 100%;
+  margin-left: auto;
+}
+.page-heading-actions > :is(.button, .text-link) {
+  margin: 0;
+}
+.competition-form .button,
+.competition-page > :is(.button, .text-button),
+.competition-section > :is(.button, .text-button),
+.auth-card > :is(.button, .text-button) {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  margin-left: auto;
 }
 .competition-page button {
   cursor: pointer;

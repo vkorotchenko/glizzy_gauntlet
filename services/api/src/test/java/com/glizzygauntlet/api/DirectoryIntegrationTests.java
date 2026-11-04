@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.glizzygauntlet.api.auth.AccountService;
+import com.glizzygauntlet.api.auth.GlobalRoleService;
 import com.glizzygauntlet.api.auth.SessionAuthentication.AccountPrincipal;
 import com.glizzygauntlet.api.competitions.CompetitionService;
 import com.glizzygauntlet.api.directory.DirectoryException;
@@ -49,9 +50,24 @@ class DirectoryIntegrationTests {
     registry.add("app.media.directory", () -> media.toString());
   }
 
+  @Test
+  void requiresSignInForVenuesPhotosAndFeaturedLists() throws Exception {
+    var venue = approved();
+    for (String path :
+        List.of(
+            "/api/v1/venues",
+            "/api/v1/venues/" + venue.id(),
+            "/api/v1/directory/photos/" + UUID.randomUUID(),
+            "/api/v1/competitions/" + CompetitionService.ALL_TIME_ID + "/featured-venues")) {
+      mvc.perform(get(path)).andExpect(status().isUnauthorized());
+    }
+    mvc.perform(get("/api/v1/venues/" + venue.id()).with(as(outsider))).andExpect(status().isOk());
+  }
+
   @Autowired DirectoryService directory;
   @Autowired CompetitionService competitions;
   @Autowired AccountService accounts;
+  @Autowired GlobalRoleService roles;
   @Autowired ImageStore images;
   @Autowired JdbcTemplate database;
   @Autowired MockMvc mvc;
@@ -66,7 +82,40 @@ class DirectoryIntegrationTests {
     owner = accounts.findOrCreate("email", "moderator@example.test", "moderator@example.test").id();
     contributor = accounts.findOrCreate("email", "author@example.test", "author@example.test").id();
     outsider = accounts.findOrCreate("email", "visitor@example.test", "visitor@example.test").id();
-    database.update("UPDATE app_users SET site_owner = TRUE WHERE id = ?", owner);
+    database.update("INSERT INTO account_roles (user_id, role) VALUES (?, 'ADMIN')", owner);
+  }
+
+  @Test
+  void venueApproversCanReviewSubmittedPhotosButCannotReadOtherDraftsOrUseAdminPowers()
+      throws Exception {
+    roles.assign(owner, outsider, GlobalRoleService.Role.VENUE_APPROVER, true);
+    var draft = directory.create(contributor, input(null, null, "Reviewable stand"));
+    var photo = directory.upload(draft.id(), contributor, null, png());
+    mvc.perform(get("/api/v1/directory/contributions/" + draft.id()).with(as(outsider)))
+        .andExpect(status().isNotFound());
+    mvc.perform(get("/api/v1/directory/photos/" + photo.id()).with(as(outsider)))
+        .andExpect(status().isNotFound());
+    directory.submit(draft.id(), contributor);
+    mvc.perform(get("/api/v1/directory/contributions?scope=pending").with(as(outsider)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.items.length()").value(1));
+    mvc.perform(get("/api/v1/directory/photos/" + photo.id()).with(as(outsider)))
+        .andExpect(status().isOk());
+    directory.review(draft.id(), outsider, true, "Verified location.");
+    assertThat(accounts.profile(outsider).siteOwner()).isFalse();
+    mvc.perform(get("/api/v1/directory/contributions/" + draft.id()).with(as(outsider)))
+        .andExpect(status().isOk());
+    mvc.perform(get("/api/v1/directory/contributions?scope=all").with(as(outsider)))
+        .andExpect(status().isForbidden());
+    rejected(
+        HttpStatus.FORBIDDEN,
+        "ADMIN_ONLY",
+        () -> directory.hide(draft.venue().id(), outsider, true, "Not permitted."));
+    assertThat(competitions.get(CompetitionService.ALL_TIME_ID, outsider).canAdminister())
+        .isFalse();
+    roles.assign(owner, outsider, GlobalRoleService.Role.VENUE_APPROVER, false);
+    mvc.perform(get("/api/v1/directory/contributions?scope=pending").with(as(outsider)))
+        .andExpect(status().isForbidden());
   }
 
   @Test
@@ -75,8 +124,10 @@ class DirectoryIntegrationTests {
     var photo =
         directory.upload(draft.id(), contributor, draft.venue().menuItems().getFirst().id(), png());
     assertThat(directory.list(0, null, null, null, null).items()).isEmpty();
-    mvc.perform(get("/api/v1/venues/" + draft.venue().id())).andExpect(status().isNotFound());
-    mvc.perform(get("/api/v1/directory/photos/" + photo.id())).andExpect(status().isNotFound());
+    mvc.perform(get("/api/v1/venues/" + draft.venue().id()).with(as(outsider)))
+        .andExpect(status().isNotFound());
+    mvc.perform(get("/api/v1/directory/photos/" + photo.id()).with(as(outsider)))
+        .andExpect(status().isNotFound());
     mvc.perform(get("/api/v1/directory/contributions/" + draft.id()).with(as(outsider)))
         .andExpect(status().isNotFound());
     directory.submit(draft.id(), contributor);
@@ -90,7 +141,8 @@ class DirectoryIntegrationTests {
     assertThat(directory.get(publicVenue.id()).name()).isEqualTo("Dog stand");
     directory.review(edit.id(), owner, true, "Confirmed update");
     assertThat(directory.get(publicVenue.id()).name()).isEqualTo("New name");
-    mvc.perform(get("/api/v1/directory/photos/" + photo.id())).andExpect(status().isNotFound());
+    mvc.perform(get("/api/v1/directory/photos/" + photo.id()).with(as(outsider)))
+        .andExpect(status().isNotFound());
     mvc.perform(get("/api/v1/directory/photos/" + photo.id()).with(as(contributor)))
         .andExpect(status().isOk());
     assertThat(database.queryForObject("SELECT count(*) FROM directory_events", Long.class))
@@ -170,8 +222,9 @@ class DirectoryIntegrationTests {
                   .content(invalid))
           .andExpect(status().isBadRequest());
     }
-    mvc.perform(get("/api/v1/venues?south=20")).andExpect(status().isBadRequest());
-    mvc.perform(get("/api/v1/venues?south=NaN&north=90&west=-180&east=180"))
+    mvc.perform(get("/api/v1/venues?south=20").with(as(outsider)))
+        .andExpect(status().isBadRequest());
+    mvc.perform(get("/api/v1/venues?south=NaN&north=90&west=-180&east=180").with(as(outsider)))
         .andExpect(status().isBadRequest());
   }
 
@@ -204,7 +257,7 @@ class DirectoryIntegrationTests {
     var photo = directory.upload(draft.id(), contributor, null, png());
     directory.submit(draft.id(), contributor);
     directory.review(draft.id(), owner, true, "Confirmed");
-    mvc.perform(get("/api/v1/directory/photos/" + photo.id()))
+    mvc.perform(get("/api/v1/directory/photos/" + photo.id()).with(as(outsider)))
         .andExpect(status().isOk())
         .andExpect(content().contentType("image/jpeg"))
         .andExpect(header().string("Cache-Control", "no-store"))
@@ -268,7 +321,7 @@ class DirectoryIntegrationTests {
         HttpStatus.CONFLICT,
         "PHOTO_LIMIT",
         () -> directory.upload(draft.id(), contributor, null, pngUnchecked()));
-    var limited = new DirectoryService(database, images, competitions, 1);
+    var limited = new DirectoryService(database, images, competitions, roles, 1);
     // The real service also holds the global transaction lock; this read-only quota rejection
     // writes no files.
     var transactions =
@@ -297,7 +350,7 @@ class DirectoryIntegrationTests {
                 Instant.now().plusSeconds(3600).truncatedTo(java.time.temporal.ChronoUnit.MILLIS),
                 Instant.now().plusSeconds(7200).truncatedTo(java.time.temporal.ChronoUnit.MILLIS),
                 false));
-    mvc.perform(get("/api/v1/competitions/" + draft.id() + "/featured-venues"))
+    mvc.perform(get("/api/v1/competitions/" + draft.id() + "/featured-venues").with(as(outsider)))
         .andExpect(status().isNotFound());
     mvc.perform(
             put("/api/v1/competitions/" + draft.id() + "/featured-venues/" + venue.id())

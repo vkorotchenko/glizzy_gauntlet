@@ -35,9 +35,12 @@ const competition: Competition = {
   submissionClosesAt: '2026-10-28T00:00:00Z',
   published: true,
   allowSharedMeals: true,
+  trackingMode: 'BOTH',
+  allTime: false,
   version: 1,
   phase: 'FINALIZED',
   viewerRole: 'ORGANIZER',
+  canAdminister: true,
   memberCount: 1,
 }
 const versions = [

@@ -28,8 +28,9 @@ public class ProgressService {
         WHERE e.competition_id = ? AND NOT e.withdrawn GROUP BY m.owner_id
       ), ranked AS (
         SELECT u.id, u.display_name, COALESCE(s.total, 0) AS total, COALESCE(s.whole, 0) AS whole,
-          RANK() OVER (ORDER BY COALESCE(s.total, 0) DESC) AS rank
+          RANK() OVER (ORDER BY CASE WHEN c.tracking_mode = 'COUNT' THEN COALESCE(s.whole, 0) ELSE COALESCE(s.total, 0) END DESC) AS rank
         FROM competition_memberships m JOIN app_users u ON u.id = m.user_id
+        JOIN competitions c ON c.id = m.competition_id
         LEFT JOIN scores s ON s.owner_id = u.id
         WHERE m.competition_id = ? AND (m.status = 'ACTIVE' OR s.owner_id IS NOT NULL)
       )
@@ -55,7 +56,8 @@ public class ProgressService {
       long totalHundredths,
       long wholeHotDogs,
       long mealCount,
-      long cumulativeHundredths) {}
+      long cumulativeHundredths,
+      long cumulativeWholeHotDogs) {}
 
   public record Place(UUID venueId, String location, long mealCount, long totalHundredths) {}
 
@@ -105,7 +107,7 @@ public class ProgressService {
     }
     var rows =
         database.query(
-            RANKED + "SELECT * FROM ranked ORDER BY total DESC, id LIMIT 21 OFFSET ?",
+            RANKED + "SELECT * FROM ranked ORDER BY rank, id LIMIT 21 OFFSET ?",
             (rs, i) ->
                 new Standing(
                     rs.getLong("rank"),
@@ -157,7 +159,7 @@ public class ProgressService {
         database.queryForMap(
             """
         SELECT COUNT(*) AS meals, COUNT(DISTINCT r.venue_id) AS venues,
-          COUNT(DISTINCT r.location) FILTER (WHERE r.venue_id IS NULL) AS private_places
+          COUNT(DISTINCT r.location) FILTER (WHERE r.venue_id IS NULL AND r.location <> '') AS private_places
         """
                 + OWN,
             id,
@@ -165,7 +167,9 @@ public class ProgressService {
     var zone = ZoneId.of(competition.timeZone());
     var now = database.queryForObject("SELECT clock_timestamp()", OffsetDateTime.class).toInstant();
     var last =
-        (now.isBefore(competition.endsAt()) ? now : competition.endsAt().minusNanos(1))
+        (competition.endsAt() == null || now.isBefore(competition.endsAt())
+                ? now
+                : competition.endsAt().minusNanos(1))
             .atZone(zone)
             .toLocalDate()
             .minusDays(dayPage * 30L);
@@ -175,15 +179,17 @@ public class ProgressService {
     if (!last.isBefore(first)) {
       Instant from = start.atStartOfDay(zone).toInstant();
       Instant until = last.plusDays(1).atStartOfDay(zone).toInstant();
-      long cumulative =
-          database.queryForObject(
-              "SELECT COALESCE(SUM(COALESCE(e.adjusted_total_hundredths, r.total_hundredths)), 0) "
+      var earlier =
+          database.queryForMap(
+              "SELECT COALESCE(SUM(COALESCE(e.adjusted_total_hundredths, r.total_hundredths)), 0) AS total, "
+                  + "COALESCE(SUM(COALESCE(e.adjusted_whole_hot_dogs, r.whole_hot_dogs)), 0) AS whole "
                   + OWN
                   + " AND r.eaten_at < ?",
-              Long.class,
               id,
               user,
               from.atOffset(ZoneOffset.UTC));
+      long cumulative = ((Number) earlier.get("total")).longValue();
+      long cumulativeWhole = ((Number) earlier.get("whole")).longValue();
       var daily = new HashMap<LocalDate, long[]>();
       database.query(
           connection -> {
@@ -215,7 +221,8 @@ public class ProgressService {
       for (var date = start; !date.isAfter(last); date = date.plusDays(1)) {
         var totals = daily.getOrDefault(date, new long[3]);
         cumulative = Math.addExact(cumulative, totals[0]);
-        days.add(new Day(date, totals[0], totals[1], totals[2], cumulative));
+        cumulativeWhole = Math.addExact(cumulativeWhole, totals[1]);
+        days.add(new Day(date, totals[0], totals[1], totals[2], cumulative, cumulativeWhole));
       }
     }
     var places =
@@ -226,6 +233,7 @@ public class ProgressService {
         """
                 + OWN
                 + """
+         AND (r.venue_id IS NOT NULL OR r.location <> '')
          GROUP BY r.venue_id, CASE WHEN r.venue_id IS NULL THEN r.location END
          ORDER BY total DESC, r.venue_id NULLS LAST, MIN(r.location) LIMIT 21 OFFSET ?
         """,

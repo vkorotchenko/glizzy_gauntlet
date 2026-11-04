@@ -1,7 +1,8 @@
 import { lazy, Suspense, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { loadSession } from '../auth/api'
+import { loadSession, isAdmin, canReviewVenues } from '../auth/api'
+import { PageHeading } from '../PageHeading'
 import * as api from './api'
 
 const VenueMap = lazy(() => import('./VenueMap'))
@@ -49,73 +50,32 @@ function Pager({
   )
 }
 
+const emptyVenues: api.Venue[] = []
+
 export function DirectoryPage() {
   const session = useSession()
-  const [scope, setScope] = useState<'public' | api.Scope>('public')
-  const [page, setPage] = useState(0)
-  const [map, setMap] = useState(false)
   const venues = useQuery({
-    queryKey: ['directory', 'venues', page],
-    queryFn: ({ signal }) => api.listVenues(page, signal),
-    enabled: scope === 'public',
+    queryKey: ['directory', 'map'],
+    queryFn: ({ signal }) => api.mapVenues(signal),
+    enabled: Boolean(session.data?.user),
   })
-  const contributions = useQuery({
-    queryKey: ['directory', 'contributions', scope, page],
-    queryFn: ({ signal }) =>
-      api.listContributions(scope as api.Scope, page, signal),
-    enabled: scope !== 'public' && Boolean(session.data?.user),
-  })
-  const select = (value: typeof scope) => {
-    setScope(value)
-    setPage(0)
-  }
   return (
     <section className="competition-page">
       <span className="eyebrow">Find your next spot</span>
-      <h1>Venue directory</h1>
+      <PageHeading title="Venue directory">
+        <Link className="button" to="/venues/new">
+          Suggest a venue
+        </Link>
+      </PageHeading>
       <p>
         Community-listed sellers and menus, reviewed by the site owner. Listings
         do not guarantee current stock, prices, or opening hours.
       </p>
-      <div className="competition-actions">
-        <button
-          className="text-button"
-          aria-pressed={scope === 'public'}
-          onClick={() => select('public')}
-        >
-          Approved venues
-        </button>
-        <button
-          className="text-button"
-          aria-pressed={scope === 'mine'}
-          onClick={() => select('mine')}
-        >
-          My contributions
-        </button>
-        {session.data?.user?.siteOwner && (
-          <>
-            <button
-              className="text-button"
-              aria-pressed={scope === 'pending'}
-              onClick={() => select('pending')}
-            >
-              Review queue
-            </button>
-            <button
-              className="text-button"
-              aria-pressed={scope === 'all'}
-              onClick={() => select('all')}
-            >
-              All contributions
-            </button>
-          </>
-        )}
-        <Link className="button" to="/venues/new">
-          Suggest a venue
-        </Link>
-      </div>
-      {scope === 'public' ? (
+      {session.data?.user ? (
         <>
+          <Suspense fallback={<p role="status">Loading map...</p>}>
+            <VenueMap venues={venues.data ?? emptyVenues} />
+          </Suspense>
           {venues.isPending && <p role="status">Loading venues...</p>}
           <ErrorNotice error={venues.error} />
           {venues.isError && (
@@ -126,53 +86,51 @@ export function DirectoryPage() {
               Try again
             </button>
           )}
-          {venues.data && !venues.isError && (
-            <>
-              <button
-                className="text-button"
-                aria-expanded={map}
-                onClick={() => setMap(!map)}
-              >
-                {map ? 'Hide map' : 'Load map (external tiles)'}
-              </button>
-              {map && (
-                <Suspense fallback={<p role="status">Loading map...</p>}>
-                  <VenueMap venues={venues.data.items} />
-                </Suspense>
-              )}
-              {!venues.data.items.length && (
-                <p>No approved venues yet. Suggest the first spot.</p>
-              )}
-              <div className="competition-grid">
-                {venues.data.items.map((venue) => (
-                  <article className="competition-card" key={venue.id}>
-                    <h2>
-                      <Link to={`/venues/${venue.id}`}>{venue.name}</Link>
-                    </h2>
-                    <p>{venue.address}</p>
-                    {venue.photos[0] && (
-                      <img
-                        className="venue-thumbnail"
-                        loading="lazy"
-                        src={api.photoUrl(venue.photos[0].id)}
-                        alt={`Community photo of ${venue.name}`}
-                      />
-                    )}
-                  </article>
-                ))}
-              </div>
-              <Pager
-                page={page}
-                hasMore={venues.data.hasMore}
-                change={setPage}
-              />
-            </>
+          {venues.data && !venues.isError && !venues.data.length && (
+            <p>No approved venues yet. Suggest the first spot.</p>
           )}
         </>
-      ) : !session.data?.user ? (
+      ) : (
         <p>
-          <Link to="/sign-in">Sign in</Link> to view contributions.
+          <Link to="/sign-in">Sign in</Link> to view the venue map.
         </p>
+      )}
+    </section>
+  )
+}
+
+export function ContributionsPage({ scope = 'mine' }: { scope?: api.Scope }) {
+  const session = useSession()
+  const [page, setPage] = useState(0)
+  const allowed =
+    Boolean(session.data?.user) &&
+    (scope === 'mine' ||
+      (scope === 'pending'
+        ? canReviewVenues(session.data?.user)
+        : isAdmin(session.data?.user)))
+  const contributions = useQuery({
+    queryKey: ['directory', 'contributions', scope, page],
+    queryFn: ({ signal }) => api.listContributions(scope, page, signal),
+    enabled: allowed,
+  })
+  return (
+    <section className="competition-page">
+      <Link to="/account">Your profile</Link>
+      <PageHeading
+        title={
+          scope === 'mine'
+            ? 'My venues'
+            : scope === 'pending'
+              ? 'Review queue'
+              : 'All contributions'
+        }
+      >
+        <Link className="button" to="/venues/new">
+          Suggest a venue
+        </Link>
+      </PageHeading>
+      {!allowed ? (
+        <p>Sign in with an authorized account to view these contributions.</p>
       ) : (
         <>
           {contributions.isPending && (
@@ -301,6 +259,7 @@ export function VenuePage() {
     queryKey: ['directory', 'venue', id],
     queryFn: ({ signal }) => api.getVenue(id, signal),
     retry: false,
+    enabled: Boolean(session.data?.user),
   })
   return (
     <section className="competition-page">
@@ -309,12 +268,13 @@ export function VenuePage() {
       <ErrorNotice error={detail.error} />
       {detail.data && !detail.isError && (
         <>
-          <h1>{detail.data.name}</h1>
+          <PageHeading title={detail.data.name}>
+            <Link className="button secondary" to={`/venues/${id}/suggest`}>
+              Suggest an update
+            </Link>
+          </PageHeading>
           <VenueContent venue={detail.data} />
-          <Link className="button secondary" to={`/venues/${id}/suggest`}>
-            Suggest an update
-          </Link>
-          {session.data?.user?.siteOwner && <VisibilityControls venueId={id} />}
+          {isAdmin(session.data?.user) && <VisibilityControls venueId={id} />}
         </>
       )}
     </section>
@@ -494,7 +454,9 @@ export function ContributionEditorPage() {
   return (
     <section className="competition-page">
       <Link to="/venues">Venue directory</Link>
-      <h1>{id ? 'Suggest a listing update' : 'Suggest a venue'}</h1>
+      <PageHeading
+        title={id ? 'Suggest a listing update' : 'Suggest a venue'}
+      />
       {session.isPending ? (
         <p role="status">Loading account...</p>
       ) : !session.data?.user ? (
@@ -667,7 +629,7 @@ export function ContributionPage() {
     mutationFn: () => api.discardContribution(id),
     onSuccess: async () => {
       await refresh()
-      navigate('/venues')
+      navigate('/account/contributions')
     },
   })
   const item = detail.data
@@ -687,7 +649,7 @@ export function ContributionPage() {
               <span className="eyebrow competition-label">
                 {item.status.toLowerCase()}
               </span>
-              <h1>{item.venue.name}</h1>
+              <PageHeading title={item.venue.name} />
               <p>Contribution preview. This is not a public directory page.</p>
               {item.reviewReason && (
                 <p className="form-notice">Review: {item.reviewReason}</p>
@@ -698,19 +660,20 @@ export function ContributionPage() {
               )}
               {item.status === 'PENDING' && (
                 <p role="status">
-                  Awaiting site-owner review. The listing and its photos are not
+                  Awaiting venue review. The listing and its photos are not
                   published by this submission.
                 </p>
               )}
-              {item.status === 'PENDING' && session.data.user.siteOwner && (
-                <ReviewActions id={id} refresh={refresh} />
-              )}
+              {item.status === 'PENDING' &&
+                canReviewVenues(session.data.user) && (
+                  <ReviewActions id={id} refresh={refresh} />
+                )}
               {item.status === 'APPROVED' && (
                 <>
                   <Link to={`/venues/${item.venue.id}`}>
                     View current public listing
                   </Link>
-                  {session.data.user.siteOwner && (
+                  {isAdmin(session.data.user) && (
                     <VisibilityControls venueId={item.venue.id} />
                   )}
                 </>

@@ -2,6 +2,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -18,22 +19,19 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - run: npm ci
-      - run: npm run check
-      - run: npm run build
-      - run: ./mvnw -B verify
-        working-directory: services/api
-      - run: npx playwright install --with-deps chromium
+      - run: make install
+      - run: make ci
+      - run: make browser-install ARGS=--with-deps
       - name: Start the local stack
-        run: docker compose --env-file .env.example -f infra/compose.yaml -f infra/compose.dev.yaml up --build --wait
+        run: make up ENV_FILE=.env.example
         env:
           POSTGRES_PASSWORD: ci-only-ephemeral-password
-      - run: npm run test:e2e
+      - run: make test-e2e
         env:
           E2E_DIRECTORY_DB_CONTAINER: glizzy-gauntlet-db-1
           E2E_TEST_DB_CONTAINER: glizzy-gauntlet-db-1
       - name: Rehearse a clean database and media restore
-        run: npm run test:recovery
+        run: make test-recovery
         env:
           RECOVERY_TEST_DISPOSABLE: '1'
           RECOVERY_SOURCE_PROJECT: glizzy-gauntlet

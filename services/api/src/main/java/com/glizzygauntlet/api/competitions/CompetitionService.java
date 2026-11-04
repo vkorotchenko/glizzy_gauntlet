@@ -1,6 +1,7 @@
 package com.glizzygauntlet.api.competitions;
 
 import com.glizzygauntlet.api.auth.AuthProperties;
+import com.glizzygauntlet.api.auth.GlobalRoleService;
 import jakarta.validation.constraints.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -15,6 +16,7 @@ import java.time.ZoneId;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -23,18 +25,28 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class CompetitionService {
+  public static final UUID ALL_TIME_ID = UUID.fromString("00000000-0000-4000-8000-000000000000");
   private static final SecureRandom RANDOM = new SecureRandom();
   private final JdbcTemplate database;
   private final AuthProperties auth;
+  private final GlobalRoleService globalRoles;
 
-  public CompetitionService(JdbcTemplate database, AuthProperties auth) {
+  public CompetitionService(
+      JdbcTemplate database, AuthProperties auth, GlobalRoleService globalRoles) {
     this.database = database;
     this.auth = auth;
+    this.globalRoles = globalRoles;
   }
 
   public enum Visibility {
     PUBLIC,
     PRIVATE
+  }
+
+  public enum TrackingMode {
+    COUNT,
+    LENGTH,
+    BOTH
   }
 
   public enum Role {
@@ -60,7 +72,24 @@ public class CompetitionService {
       @NotBlank @Size(max = 80) String timeZone,
       @NotNull Instant startsAt,
       @NotNull Instant endsAt,
-      @NotNull Boolean allowSharedMeals) {}
+      @NotNull Boolean allowSharedMeals,
+      TrackingMode trackingMode) {
+    public Settings {
+      if (trackingMode == null) trackingMode = TrackingMode.BOTH;
+    }
+
+    public Settings(
+        String name,
+        String rules,
+        Visibility visibility,
+        String timeZone,
+        Instant startsAt,
+        Instant endsAt,
+        Boolean allowSharedMeals) {
+      this(
+          name, rules, visibility, timeZone, startsAt, endsAt, allowSharedMeals, TrackingMode.BOTH);
+    }
+  }
 
   public record Competition(
       UUID id,
@@ -72,10 +101,13 @@ public class CompetitionService {
       Instant endsAt,
       Instant submissionClosesAt,
       boolean allowSharedMeals,
+      TrackingMode trackingMode,
+      boolean allTime,
       boolean published,
       long version,
       Phase phase,
       Role viewerRole,
+      boolean canAdminister,
       long memberCount) {}
 
   public record Page(List<Competition> items, boolean hasMore) {}
@@ -105,25 +137,41 @@ public class CompetitionService {
       Settings settings,
       Instant publishedAt,
       long version,
-      long resultVersion) {}
+      long resultVersion,
+      boolean allTime) {}
 
   private record InviteRow(UUID id, UUID competitionId, Instant expiresAt, Instant revokedAt) {}
 
   public Page list(UUID user, String scope, int page) {
-    if (!List.of("public", "mine").contains(scope) || page < 0 || page > 1000)
-      throw error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST");
-    if (scope.equals("mine")) requireUser(user);
-    String filter =
-        scope.equals("mine")
-            ? "EXISTS (SELECT 1 FROM competition_memberships m WHERE m.competition_id = c.id AND m.user_id = ? AND m.status = 'ACTIVE')"
-            : "published_at IS NOT NULL AND visibility = 'PUBLIC'";
-    Object[] args =
-        scope.equals("mine") ? new Object[] {user, page * 20} : new Object[] {page * 20};
+    if (!List.of("public", "mine", "joined", "administered", "participating").contains(scope)
+        || page < 0
+        || page > 1000) throw error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST");
+    if (!scope.equals("public")) requireUser(user);
+    String filter;
+    Object[] args;
+    if (scope.equals("public")) {
+      filter = "published_at IS NOT NULL AND visibility = 'PUBLIC'";
+      args = new Object[] {page * 20};
+    } else if (scope.equals("administered")) {
+      filter = "((NOT c.all_time AND c.organizer_id = ?) OR (c.all_time AND ?))";
+      args = new Object[] {user, globalRoles.isAdmin(user), page * 20};
+    } else {
+      filter =
+          "EXISTS (SELECT 1 FROM competition_memberships m WHERE m.competition_id = c.id AND m.user_id = ? AND m.status = 'ACTIVE')"
+              + (scope.equals("joined") ? " AND published_at IS NOT NULL" : "")
+              + (scope.equals("participating")
+                  ? " AND (c.all_time OR c.organizer_id IS DISTINCT FROM ?) AND NOT (c.all_time AND ?)"
+                  : "");
+      args =
+          scope.equals("participating")
+              ? new Object[] {user, user, globalRoles.isAdmin(user), page * 20}
+              : new Object[] {user, page * 20};
+    }
     var rows =
         database.query(
             "SELECT c.* FROM competitions c WHERE "
                 + filter
-                + " ORDER BY created_at DESC, id LIMIT 21 OFFSET ?",
+                + " ORDER BY all_time DESC, created_at DESC, id LIMIT 21 OFFSET ?",
             this::mapRow,
             args);
     Instant now = now();
@@ -138,6 +186,56 @@ public class CompetitionService {
   }
 
   @Transactional
+  public void enrollAllTime(UUID user) {
+    database.update(
+        """
+        INSERT INTO competitions (id, name, rules, visibility, time_zone, starts_at,
+          allow_shared_meals, tracking_mode, published_at, all_time)
+        VALUES (?, 'All-time Glizzy Gauntlet',
+          'A permanent, friendly hot dog count leaderboard. Submit meals explicitly to share them with members. Leave at any time to withdraw your submissions; private meal records remain yours.',
+          'PUBLIC', 'UTC', '1970-01-01T00:00:00Z', true, 'COUNT', clock_timestamp(), true)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        ALL_TIME_ID);
+    database.update(
+        "INSERT INTO competition_memberships (competition_id, user_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+        ALL_TIME_ID,
+        user);
+  }
+
+  @Transactional
+  public Competition leave(UUID id, UUID user) {
+    requireUser(user);
+    var row = row(id, true);
+    requireVisible(row, user);
+    if (!row.allTime()) throw error(HttpStatus.CONFLICT, "LEAVING_NOT_SUPPORTED");
+    int changed =
+        database.update(
+            "UPDATE competition_memberships SET status = 'LEFT' WHERE competition_id = ? AND user_id = ? AND status = 'ACTIVE'",
+            id,
+            user);
+    if (changed > 0) {
+      database.update(
+          """
+          WITH withdrawn AS (
+            UPDATE competition_entries e SET withdrawn = true, version = e.version + 1
+            FROM meals m WHERE m.id = e.meal_id AND m.owner_id = ? AND e.competition_id = ? AND NOT e.withdrawn
+            RETURNING e.id, e.revision_id
+          )
+          INSERT INTO competition_entry_events
+            (id, entry_id, actor_id, action, before_revision, after_revision, was_withdrawn, is_withdrawn, reason)
+          SELECT gen_random_uuid(), id, ?, 'WITHDRAWN', revision_id, revision_id, false, true,
+            'Left all-time competition' FROM withdrawn
+          """,
+          user,
+          id,
+          user);
+      event(id, user, "MEMBER_LEFT", user, null);
+    }
+    return view(row, user, now());
+  }
+
+  @Transactional
   public Competition create(UUID user, Settings settings) {
     requireUser(user);
     validate(settings);
@@ -146,8 +244,8 @@ public class CompetitionService {
     UUID id = UUID.randomUUID();
     database.update(
         """
-        INSERT INTO competitions (id, organizer_id, name, rules, visibility, time_zone, starts_at, ends_at, allow_shared_meals)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO competitions (id, organizer_id, name, rules, visibility, time_zone, starts_at, ends_at, allow_shared_meals, tracking_mode)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         id,
         user,
@@ -157,7 +255,8 @@ public class CompetitionService {
         settings.timeZone(),
         sql(settings.startsAt()),
         sql(settings.endsAt()),
-        settings.allowSharedMeals());
+        settings.allowSharedMeals(),
+        settings.trackingMode().name());
     database.update(
         "INSERT INTO competition_memberships (competition_id, user_id) VALUES (?, ?)", id, user);
     event(id, user, "CREATED", null, null);
@@ -170,7 +269,8 @@ public class CompetitionService {
     requireOrganizer(row, user);
     Instant now = now();
     checkVersion(row, version);
-    if (row.resultVersion() > 0
+    if (row.allTime()
+        || row.resultVersion() > 0
         || (row.publishedAt() != null && !now.isBefore(row.settings().startsAt())))
       throw error(HttpStatus.CONFLICT, "SETTINGS_LOCKED");
     validate(settings);
@@ -178,7 +278,7 @@ public class CompetitionService {
     database.update(
         """
         UPDATE competitions SET name = ?, rules = ?, visibility = ?, time_zone = ?, starts_at = ?,
-        ends_at = ?, allow_shared_meals = ?, version = version + 1 WHERE id = ?
+        ends_at = ?, allow_shared_meals = ?, tracking_mode = ?, version = version + 1 WHERE id = ?
         """,
         settings.name().strip(),
         settings.rules().strip(),
@@ -187,6 +287,7 @@ public class CompetitionService {
         sql(settings.startsAt()),
         sql(settings.endsAt()),
         settings.allowSharedMeals(),
+        settings.trackingMode().name(),
         id);
     event(id, user, "SETTINGS_UPDATED", null, null);
     return view(row(id, false), user, now);
@@ -218,24 +319,29 @@ public class CompetitionService {
 
   public MemberPage members(UUID id, UUID user, int page) {
     var row = row(id, false);
-    requireMember(row, user);
+    if (!canAdminister(row, user)) requireMember(row, user);
     if (page < 0 || page > 1000) throw error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST");
     var members =
         database.query(
             """
-        SELECT u.id, u.display_name, m.status FROM competition_memberships m
-        JOIN app_users u ON u.id = m.user_id WHERE m.competition_id = ?
-        ORDER BY m.joined_at, u.id LIMIT 51 OFFSET ?
+        SELECT u.id, u.display_name, m.status, a.user_id IS NOT NULL AS is_admin
+        FROM competition_memberships m JOIN app_users u ON u.id = m.user_id
+        LEFT JOIN account_roles a ON a.user_id = u.id AND a.role = 'ADMIN'
+        WHERE m.competition_id = ?
+        AND (NOT ? OR m.status = 'ACTIVE') ORDER BY m.joined_at, u.id LIMIT 51 OFFSET ?
         """,
             (rs, i) ->
                 new Member(
                     rs.getObject("id", UUID.class),
                     rs.getString("display_name"),
-                    row.organizerId().equals(rs.getObject("id", UUID.class))
+                    (row.allTime()
+                            ? rs.getBoolean("is_admin")
+                            : Objects.equals(row.organizerId(), rs.getObject("id", UUID.class)))
                         ? Role.ORGANIZER
                         : Role.MEMBER,
                     rs.getString("status")),
             id,
+            row.allTime(),
             page * 50);
     return new MemberPage(members.stream().limit(50).toList(), members.size() > 50);
   }
@@ -244,7 +350,11 @@ public class CompetitionService {
   public void exclude(UUID id, UUID user, UUID target, String reason) {
     var row = row(id, true);
     requireOrganizer(row, user);
-    if (target.equals(user)) throw error(HttpStatus.CONFLICT, "CANNOT_EXCLUDE_ORGANIZER");
+    if (target.equals(user)
+        || (row.allTime()
+            ? globalRoles.isAdmin(target)
+            : Objects.equals(row.organizerId(), target)))
+      throw error(HttpStatus.CONFLICT, "CANNOT_EXCLUDE_ORGANIZER");
     if (reason == null || reason.isBlank() || reason.length() > 500)
       throw error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST");
     int changed =
@@ -299,7 +409,8 @@ public class CompetitionService {
     String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     UUID invitation = UUID.randomUUID();
     Instant expiry = now.plus(Duration.ofDays(7));
-    if (expiry.isAfter(row.settings().endsAt())) expiry = row.settings().endsAt();
+    if (row.settings().endsAt() != null && expiry.isAfter(row.settings().endsAt()))
+      expiry = row.settings().endsAt();
     database.update(
         "INSERT INTO competition_invitations (id, competition_id, token_hash, expires_at) VALUES (?, ?, ?, ?)",
         invitation,
@@ -359,7 +470,7 @@ public class CompetitionService {
     if (!"ACTIVE".equals(status)) {
       requireJoiningOpen(row, now);
       database.update(
-          "INSERT INTO competition_memberships (competition_id, user_id) VALUES (?, ?)",
+          "INSERT INTO competition_memberships (competition_id, user_id) VALUES (?, ?) ON CONFLICT (competition_id, user_id) DO UPDATE SET status = 'ACTIVE', joined_at = clock_timestamp()",
           row.id(),
           user);
       event(row.id(), user, "MEMBER_JOINED", user, null);
@@ -372,13 +483,14 @@ public class CompetitionService {
         || row.resultVersion() > 0
         || !now.isBefore(invite.expiresAt())
         || row.publishedAt() == null
-        || !now.isBefore(row.settings().endsAt()))
+        || (row.settings().endsAt() != null && !now.isBefore(row.settings().endsAt())))
       throw error(HttpStatus.BAD_REQUEST, "INVALID_INVITATION");
   }
 
   private void requireJoiningOpen(Row row, Instant now) {
     if (row.publishedAt() == null) throw error(HttpStatus.CONFLICT, "PUBLISH_FIRST");
-    if (row.resultVersion() > 0 || !now.isBefore(row.settings().endsAt()))
+    if (row.resultVersion() > 0
+        || (row.settings().endsAt() != null && !now.isBefore(row.settings().endsAt())))
       throw error(HttpStatus.CONFLICT, "JOINING_CLOSED");
   }
 
@@ -413,8 +525,13 @@ public class CompetitionService {
   }
 
   private void requireOrganizer(Row row, UUID user) {
+    if (canAdminister(row, user)) return;
     requireMember(row, user);
-    if (!row.organizerId().equals(user)) throw error(HttpStatus.FORBIDDEN, "ORGANIZER_ONLY");
+    throw error(HttpStatus.FORBIDDEN, "ORGANIZER_ONLY");
+  }
+
+  private boolean canAdminister(Row row, UUID user) {
+    return row.allTime() ? globalRoles.isAdmin(user) : role(row, user) == Role.ORGANIZER;
   }
 
   private void requireUser(UUID user) {
@@ -423,7 +540,9 @@ public class CompetitionService {
 
   private Role role(Row row, UUID user) {
     if (user == null || !"ACTIVE".equals(memberStatus(row.id(), user))) return Role.NONE;
-    return row.organizerId().equals(user) ? Role.ORGANIZER : Role.MEMBER;
+    return (row.allTime() ? globalRoles.isAdmin(user) : Objects.equals(row.organizerId(), user))
+        ? Role.ORGANIZER
+        : Role.MEMBER;
   }
 
   private String memberStatus(UUID id, UUID user) {
@@ -439,17 +558,19 @@ public class CompetitionService {
 
   private Competition view(Row row, UUID user, Instant now) {
     var s = row.settings();
-    Instant close = s.endsAt().plus(Duration.ofHours(24));
+    Instant close = s.endsAt() == null ? null : s.endsAt().plus(Duration.ofHours(24));
     Phase phase =
-        row.resultVersion() > 0
-            ? (row.resultVersion() == 1 ? Phase.FINALIZED : Phase.REVISED)
-            : row.publishedAt() == null
-                ? Phase.DRAFT
-                : now.isBefore(s.startsAt())
-                    ? Phase.SCHEDULED
-                    : now.isBefore(s.endsAt())
-                        ? Phase.ACTIVE
-                        : now.isBefore(close) ? Phase.GRACE : Phase.CLOSED;
+        row.allTime()
+            ? Phase.ACTIVE
+            : row.resultVersion() > 0
+                ? (row.resultVersion() == 1 ? Phase.FINALIZED : Phase.REVISED)
+                : row.publishedAt() == null
+                    ? Phase.DRAFT
+                    : now.isBefore(s.startsAt())
+                        ? Phase.SCHEDULED
+                        : now.isBefore(s.endsAt())
+                            ? Phase.ACTIVE
+                            : now.isBefore(close) ? Phase.GRACE : Phase.CLOSED;
     long count =
         database.queryForObject(
             "SELECT count(*) FROM competition_memberships WHERE competition_id = ? AND status = 'ACTIVE'",
@@ -465,10 +586,13 @@ public class CompetitionService {
         s.endsAt(),
         close,
         s.allowSharedMeals(),
+        s.trackingMode(),
+        row.allTime(),
         row.publishedAt() != null,
         row.version(),
         phase,
         role(row, user),
+        canAdminister(row, user),
         count);
   }
 
@@ -493,10 +617,12 @@ public class CompetitionService {
             rs.getString("time_zone"),
             instant(rs, "starts_at"),
             instant(rs, "ends_at"),
-            rs.getBoolean("allow_shared_meals")),
+            rs.getBoolean("allow_shared_meals"),
+            TrackingMode.valueOf(rs.getString("tracking_mode"))),
         instant(rs, "published_at"),
         rs.getLong("version"),
-        rs.getLong("current_result_version"));
+        rs.getLong("current_result_version"),
+        rs.getBoolean("all_time"));
   }
 
   private void validate(Settings s) {

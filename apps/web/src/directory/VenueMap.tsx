@@ -54,7 +54,7 @@ export default function VenueMap({ venues }: { venues: Venue[] }) {
     <>
       {unavailable && (
         <p role="status">
-          Map unavailable. All venues are still in the list below.
+          Map unavailable. Refresh the page to try loading it again.
         </p>
       )}
       <div
@@ -64,7 +64,7 @@ export default function VenueMap({ venues }: { venues: Venue[] }) {
         aria-label="Approved venue map"
       />
       <p className="form-note">
-        Map shows only this page&apos;s listings. Tiles:{' '}
+        Map shows the approved venue directory. Tiles:{' '}
         <a href="https://openfreemap.org/">OpenFreeMap</a>. Data: &copy;{' '}
         <a href="https://www.openstreetmap.org/copyright">
           OpenStreetMap contributors

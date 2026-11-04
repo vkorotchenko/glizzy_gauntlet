@@ -2,7 +2,8 @@ import { useRef, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { loadSession } from '../auth/api'
-import { getCompetition } from '../competitions/api'
+import { PageHeading } from '../PageHeading'
+import { getCompetition, type TrackingMode } from '../competitions/api'
 import { formatTime } from '../competitions/time'
 import { listEntries } from '../meals/api'
 import { formatInches, toHundredths, wholeQuantity } from '../meals/measurement'
@@ -102,7 +103,15 @@ function CorrectionAudit({ id, zone }: { id: string; zone: string }) {
     </section>
   )
 }
-function MemberHighlights({ id, version }: { id: string; version: number }) {
+function MemberHighlights({
+  id,
+  version,
+  trackingMode,
+}: {
+  id: string
+  version: number
+  trackingMode: TrackingMode
+}) {
   const query = useQuery({
     queryKey: ['recaps', 'highlights', id, version],
     queryFn: ({ signal }) => api.highlights(id, version, signal),
@@ -136,14 +145,18 @@ function MemberHighlights({ id, version }: { id: string; version: number }) {
             <dd>{view.venueCount}</dd>
             <dt>Private labels</dt>
             <dd>{view.privateLocationCount}</dd>
-            <dt>Largest submitted score</dt>
-            <dd>{formatInches(view.largestMealHundredths)} inches</dd>
-            <dt>Highest-total day</dt>
-            <dd>
-              {view.busiestDay
-                ? `${view.busiestDay} / ${formatInches(view.busiestDayHundredths)} inches (${view.timeZone})`
-                : 'No counted meals'}
-            </dd>
+            {trackingMode !== 'COUNT' && (
+              <>
+                <dt>Largest submitted score</dt>
+                <dd>{formatInches(view.largestMealHundredths)} inches</dd>
+                <dt>Highest-total day</dt>
+                <dd>
+                  {view.busiestDay
+                    ? `${view.busiestDay} / ${formatInches(view.busiestDayHundredths)} inches (${view.timeZone})`
+                    : 'No counted meals'}
+                </dd>
+              </>
+            )}
           </dl>
           <h3>Most visited places</h3>
           <ul className="member-list">
@@ -151,8 +164,9 @@ function MemberHighlights({ id, version }: { id: string; version: number }) {
               <li key={index}>
                 <strong>{place.location}</strong> /{' '}
                 {place.directoryVenue ? 'Directory venue' : 'Private label'} /{' '}
-                {place.mealCount} meals / {formatInches(place.totalHundredths)}{' '}
-                inches
+                {place.mealCount} meals
+                {trackingMode !== 'COUNT' &&
+                  ` / ${formatInches(place.totalHundredths)} inches`}
               </li>
             ))}
           </ul>
@@ -264,10 +278,23 @@ export function RecapPage() {
   return (
     <section className="competition-page">
       <Link to={`/competitions/${id}`}>Back to competition</Link>
-      <h1>Competition recap</h1>
+      <PageHeading title="Competition recap">
+        {result &&
+          !recap.isError &&
+          valid &&
+          competition.data?.viewerRole === 'ORGANIZER' && (
+            <Link
+              className="button secondary"
+              to={`/competitions/${id}/corrections`}
+            >
+              Correct competition scores
+            </Link>
+          )}
+      </PageHeading>
       <p>
         Published rankings and display names are retained as immutable result
-        revisions. Equal inches share a rank; whole counts never break ties.
+        revisions. Equal tracked scores share a rank. Count-only competitions
+        rank by hot dogs; length and combined competitions rank by inches.
       </p>
       <ErrorNotice error={competition.error} />
       <ErrorNotice error={recap.error} />
@@ -299,14 +326,23 @@ export function RecapPage() {
           <dl className="competition-facts" aria-label="Recap totals">
             <dt>Participants</dt>
             <dd>{result.participantCount}</dd>
-            <dt>Total inches</dt>
-            <dd>{formatInches(result.totalHundredths)}</dd>
-            <dt>Whole hot dogs</dt>
-            <dd>{result.wholeHotDogs}</dd>
+            {competition.data!.trackingMode !== 'COUNT' && (
+              <>
+                <dt>Total inches</dt>
+                <dd>{formatInches(result.totalHundredths)}</dd>
+              </>
+            )}
+            {competition.data!.trackingMode !== 'LENGTH' && (
+              <>
+                <dt>Whole hot dogs</dt>
+                <dd>{result.wholeHotDogs}</dd>
+              </>
+            )}
           </dl>
           <ResultsTable
             items={result.standings}
             caption={`Recap standings / Revision ${result.result.version}`}
+            trackingMode={competition.data!.trackingMode}
           />
           <Pager
             page={page}
@@ -322,17 +358,13 @@ export function RecapPage() {
           />
           {member && (
             <>
-              <MemberHighlights id={id} version={result.result.version} />
+              <MemberHighlights
+                id={id}
+                version={result.result.version}
+                trackingMode={competition.data!.trackingMode}
+              />
               <CorrectionAudit id={id} zone={competition.data!.timeZone} />
             </>
-          )}
-          {competition.data?.viewerRole === 'ORGANIZER' && (
-            <Link
-              className="button secondary"
-              to={`/competitions/${id}/corrections`}
-            >
-              Correct competition scores
-            </Link>
           )}
         </>
       )}
@@ -345,10 +377,12 @@ function CorrectionForm({
   id,
   entry,
   published,
+  trackingMode,
 }: {
   id: string
   entry: Entry
   published: (version: number) => void
+  trackingMode: TrackingMode
 }) {
   const cache = useQueryClient()
   const [total, setTotal] = useState(formatInches(entry.totalHundredths))
@@ -365,7 +399,11 @@ function CorrectionForm({
         excluded,
         reason,
       }
-      if (body.totalHundredths < 1)
+      if (
+        trackingMode === 'COUNT'
+          ? body.wholeHotDogs < 1
+          : body.totalHundredths < 1
+      )
         throw new Error(
           'Retained score must be positive; use scoring exclusion to count zero.',
         )
@@ -404,22 +442,32 @@ function CorrectionForm({
           inches / {entry.revision.wholeHotDogs} whole hot dogs. Entry version{' '}
           {entry.version}.
         </p>
-        <label htmlFor={`score-${entry.id}`}>Corrected total inches</label>
-        <input
-          id={`score-${entry.id}`}
-          inputMode="decimal"
-          required
-          value={total}
-          onChange={(event) => setTotal(event.target.value)}
-        />
-        <label htmlFor={`whole-${entry.id}`}>Corrected whole hot dogs</label>
-        <input
-          id={`whole-${entry.id}`}
-          inputMode="numeric"
-          required
-          value={whole}
-          onChange={(event) => setWhole(event.target.value)}
-        />
+        {trackingMode !== 'COUNT' && (
+          <>
+            <label htmlFor={`score-${entry.id}`}>Corrected total inches</label>
+            <input
+              id={`score-${entry.id}`}
+              inputMode="decimal"
+              required
+              value={total}
+              onChange={(event) => setTotal(event.target.value)}
+            />
+          </>
+        )}
+        {trackingMode !== 'LENGTH' && (
+          <>
+            <label htmlFor={`whole-${entry.id}`}>
+              Corrected whole hot dogs
+            </label>
+            <input
+              id={`whole-${entry.id}`}
+              inputMode="numeric"
+              required
+              value={whole}
+              onChange={(event) => setWhole(event.target.value)}
+            />
+          </>
+        )}
         <label className="checkbox-label">
           <input
             type="checkbox"
@@ -446,7 +494,13 @@ function CorrectionForm({
     </form>
   )
 }
-function CorrectionEntries({ id }: { id: string }) {
+function CorrectionEntries({
+  id,
+  trackingMode,
+}: {
+  id: string
+  trackingMode: TrackingMode
+}) {
   const [page, setPage] = useState(0)
   const [published, setPublished] = useState<number | null>(null)
   const entries = useQuery({
@@ -479,6 +533,7 @@ function CorrectionEntries({ id }: { id: string }) {
               id={id}
               entry={entry}
               published={setPublished}
+              trackingMode={trackingMode}
             />
           ))}
           <Pager
@@ -508,7 +563,7 @@ export function CorrectionsPage() {
   return (
     <section className="competition-page narrow">
       <Link to={`/competitions/${id}/recap`}>View competition recap</Link>
-      <h1>Organizer score corrections</h1>
+      <PageHeading title="Organizer score corrections" />
       <p>
         After the submission cutoff only. A score override or scoring exclusion
         creates a new recap revision with an audited reason. It never changes
@@ -539,7 +594,11 @@ export function CorrectionsPage() {
             Score corrections are available after the submission window closes.
           </p>
         ) : (
-          <CorrectionEntries key={id} id={id} />
+          <CorrectionEntries
+            key={id}
+            id={id}
+            trackingMode={competition.data.trackingMode}
+          />
         ))
       )}
     </section>
