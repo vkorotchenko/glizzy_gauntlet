@@ -120,7 +120,7 @@ test('confirms an email, persists a profile, signs out, and rejects token reuse'
   }
   await expect(page.getByText('No saved meals here yet.')).toBeVisible()
   await page.getByRole('link', { name: 'Log a meal', exact: true }).click()
-  await page.getByLabel('How many hot dogs?').fill('1')
+  await expect(page.getByLabel('Description for hot dog 1')).toBeVisible()
   const saveMeal = page.getByRole('button', {
     name: 'Save meal and selected submissions',
   })
@@ -141,14 +141,14 @@ test('confirms an email, persists a profile, signs out, and rejects token reuse'
   await expect(page).toHaveURL(/\/meals\/[a-f0-9-]{36}$/)
   await page.getByRole('link', { name: 'My meals', exact: true }).click()
   await expect(
-    page.getByRole('link', { name: 'Hot dogs', exact: true }),
+    page.getByRole('link', { name: 'Hotdog', exact: true }),
   ).toBeVisible()
   await page.reload()
   await expect(
     tabs.getByRole('link', { name: 'My feed', exact: true }),
   ).toHaveAttribute('aria-current', 'page')
   await expect(
-    page.getByRole('link', { name: 'Hot dogs', exact: true }),
+    page.getByRole('link', { name: 'Hotdog', exact: true }),
   ).toBeVisible()
   await page.goto('/meals')
   await expect(page).toHaveURL(/\/account\/meals$/)
@@ -156,7 +156,7 @@ test('confirms an email, persists a profile, signs out, and rejects token reuse'
     tabs.getByRole('link', { name: 'My feed', exact: true }),
   ).toHaveAttribute('aria-current', 'page')
   await expect(
-    page.getByRole('link', { name: 'Hot dogs', exact: true }),
+    page.getByRole('link', { name: 'Hotdog', exact: true }),
   ).toBeVisible()
   await tabs.getByRole('link', { name: 'Profile settings' }).click()
   await expect(page.getByLabel('Display name')).toHaveValue('Pickle captain')

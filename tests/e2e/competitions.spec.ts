@@ -483,10 +483,12 @@ test('enrolls a new account in all-time competition and supports persistent leav
     page.getByRole('link', { name: 'Competition recap' }),
   ).toHaveCount(0)
   await page.goto('/meals/new')
-  await page.getByLabel('How many hot dogs?').fill('2')
-  await page
-    .getByRole('checkbox', { name: 'Submit to All-time Glizzy Gauntlet' })
-    .check()
+  await page.getByRole('button', { name: 'Add hot dog' }).click()
+  await expect(
+    page.getByRole('checkbox', {
+      name: 'Share with all eligible competitions',
+    }),
+  ).toBeChecked()
   await page
     .getByRole('button', { name: 'Save meal and selected submissions' })
     .click()

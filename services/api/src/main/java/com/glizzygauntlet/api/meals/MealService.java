@@ -52,8 +52,18 @@ public class MealService {
   public record Item(
       @NotBlank @Size(max = 120) String name,
       @NotNull @Min(0) @Max(100) Integer wholeQuantity,
-      @NotNull @Min(1) @Max(10000) Integer unitHundredths,
-      @NotNull @Min(0) @Max(9999) Integer partialHundredths) {}
+      @NotNull @Min(0) @Max(10000) Integer unitHundredths,
+      @NotNull @Min(0) @Max(9999) Integer partialHundredths,
+      @Size(max = 12) List<@NotBlank @Size(max = 40) String> condiments) {
+    public Item {
+      if (condiments == null) condiments = List.of();
+    }
+
+    public Item(
+        String name, Integer wholeQuantity, Integer unitHundredths, Integer partialHundredths) {
+      this(name, wholeQuantity, unitHundredths, partialHundredths, List.of());
+    }
+  }
 
   public record Content(
       Instant eatenAt,
@@ -61,7 +71,7 @@ public class MealService {
       @Size(max = 300) String location,
       @NotNull @Size(max = 2000) String notes,
       @NotNull @Size(max = 20) List<@NotNull @Valid Item> items,
-      @NotNull @Size(max = 5) List<@NotNull UUID> photoIds,
+      @NotNull @Size(max = 3) List<@NotNull UUID> photoIds,
       @Min(0) @Max(20199980) Long totalHundredths,
       @Min(0) @Max(2000) Integer wholeHotDogs) {
     public Content {
@@ -138,7 +148,8 @@ public class MealService {
       long totalHundredths,
       int wholeHotDogs,
       long reactionCount,
-      boolean reacted) {}
+      boolean reacted,
+      UUID profilePhotoId) {}
 
   public record FeedPage(List<FeedItem> items, boolean hasMore) {}
 
@@ -154,7 +165,11 @@ public class MealService {
     validatePage(page);
     var rows =
         database.query(
-            "SELECT * FROM meals WHERE owner_id = ? AND archived = ? ORDER BY created_at DESC, id LIMIT 21 OFFSET ?",
+            """
+            SELECT m.* FROM meals m JOIN meal_revisions r ON r.id = m.current_revision
+            WHERE m.owner_id = ? AND m.archived = ?
+            ORDER BY r.eaten_at DESC, m.created_at DESC, m.id LIMIT 21 OFFSET ?
+            """,
             this::map,
             user,
             archived,
@@ -277,13 +292,14 @@ public class MealService {
     int position = 0;
     for (var item : content.items())
       database.update(
-          "INSERT INTO meal_items (revision_id, position, name, whole_quantity, unit_hundredths, partial_hundredths) VALUES (?, ?, ?, ?, ?, ?)",
+          "INSERT INTO meal_items (revision_id, position, name, whole_quantity, unit_hundredths, partial_hundredths, condiments) VALUES (?, ?, ?, ?, ?, ?, ?)",
           revision,
           position++,
           item.name().strip(),
           item.wholeQuantity(),
           item.unitHundredths(),
-          item.partialHundredths());
+          item.partialHundredths(),
+          item.condiments().toArray(String[]::new));
     for (UUID photo : content.photoIds())
       database.update(
           "INSERT INTO meal_revision_photos (revision_id, photo_id) VALUES (?, ?)",
@@ -368,20 +384,32 @@ public class MealService {
         database.query(
             """
         SELECT e.id, e.competition_id, c.name AS competition_name, u.display_name, e.revision_id,
-          e.score_excluded,
+          e.score_excluded, p.id AS profile_photo_id,
           COALESCE(e.adjusted_total_hundredths, r.total_hundredths) AS score_total,
           COALESCE(e.adjusted_whole_hot_dogs, r.whole_hot_dogs) AS score_whole,
           (SELECT count(*) FROM meal_reactions likes WHERE likes.entry_id = e.id) AS reaction_count,
-          EXISTS (SELECT 1 FROM meal_reactions likes WHERE likes.entry_id = e.id AND likes.user_id = ?) AS reacted
+          EXISTS (SELECT 1 FROM meal_reactions likes WHERE likes.entry_id = e.id AND likes.user_id = ?) AS reacted,
+          r.eaten_at AS sort_eaten_at, e.created_at AS sort_created_at
         FROM competition_entries e
         JOIN competitions c ON c.id = e.competition_id
         JOIN competition_memberships viewer ON viewer.competition_id = c.id AND viewer.user_id = ?
         JOIN meals m ON m.id = e.meal_id
         JOIN app_users u ON u.id = m.owner_id
+        LEFT JOIN profile_photos p ON p.user_id = u.id
         JOIN meal_revisions r ON r.id = e.revision_id
         WHERE viewer.status = 'ACTIVE' AND c.published_at IS NOT NULL AND NOT e.withdrawn
           AND m.owner_id <> ?
-        ORDER BY r.eaten_at DESC, e.created_at DESC, e.id LIMIT 21 OFFSET ?
+        UNION ALL
+        SELECT m.id, NULL::uuid, NULL::varchar, u.display_name, r.id,
+          false, p.id, r.total_hundredths, r.whole_hot_dogs, 0::bigint, false,
+          r.eaten_at, m.created_at
+        FROM meals m
+        JOIN app_users u ON u.id = m.owner_id
+        LEFT JOIN profile_photos p ON p.user_id = u.id
+        JOIN meal_revisions r ON r.id = m.current_revision
+        WHERE m.owner_id = ? AND NOT m.archived
+        ORDER BY sort_eaten_at DESC, sort_created_at DESC, id, competition_id NULLS FIRST
+        LIMIT 21 OFFSET ?
         """,
             (rs, i) ->
                 new FeedItem(
@@ -394,7 +422,9 @@ public class MealService {
                     rs.getLong("score_total"),
                     rs.getInt("score_whole"),
                     rs.getLong("reaction_count"),
-                    rs.getBoolean("reacted")),
+                    rs.getBoolean("reacted"),
+                    rs.getObject("profile_photo_id", UUID.class)),
+            user,
             user,
             user,
             user,
@@ -520,7 +550,7 @@ public class MealService {
 
   private long storedBytes() {
     return count(
-        "SELECT (SELECT COALESCE(sum(bytes), 0) FROM directory_photos) + (SELECT COALESCE(sum(bytes), 0) FROM meal_photos)");
+        "SELECT (SELECT COALESCE(sum(bytes), 0) FROM directory_photos) + (SELECT COALESCE(sum(bytes), 0) FROM meal_photos) + (SELECT COALESCE(sum(cover_photo_bytes), 0) FROM competitions) + (SELECT COALESCE(sum(bytes), 0) FROM profile_photos)");
   }
 
   private void submit(
@@ -616,7 +646,7 @@ public class MealService {
 
   private void validate(Content content) {
     if (content.items().size() > 20
-        || content.photoIds().size() > 5
+        || content.photoIds().size() > 3
         || new HashSet<>(content.photoIds()).size() != content.photoIds().size()) throw invalid();
     if (content.items().isEmpty()) {
       if (content.totalHundredths() == null
@@ -634,12 +664,19 @@ public class MealService {
       if (item.name().isBlank()
           || item.wholeQuantity() < 0
           || item.wholeQuantity() > 100
-          || item.unitHundredths() <= 0
+          || item.unitHundredths() < 0
           || item.unitHundredths() > 10000
           || item.partialHundredths() < 0
-          || item.partialHundredths() >= item.unitHundredths()
+          || (item.unitHundredths() == 0
+              ? item.partialHundredths() != 0
+              : item.partialHundredths() >= item.unitHundredths())
           || (item.wholeQuantity() == 0 && item.partialHundredths() == 0))
         throw bad("INVALID_MEASUREMENT");
+      if (item.condiments().size() > 12
+          || item.condiments().stream()
+              .anyMatch(
+                  condiment -> condiment == null || condiment.isBlank() || condiment.length() > 40)
+          || new HashSet<>(item.condiments()).size() != item.condiments().size()) throw invalid();
     }
   }
 
@@ -690,7 +727,8 @@ public class MealService {
                             item.getString("name"),
                             item.getInt("whole_quantity"),
                             item.getInt("unit_hundredths"),
-                            item.getInt("partial_hundredths")),
+                            item.getInt("partial_hundredths"),
+                            Arrays.asList((String[]) item.getArray("condiments").getArray())),
                     id),
                 database.queryForList(
                     "SELECT photo_id FROM meal_revision_photos WHERE revision_id = ? ORDER BY photo_id",

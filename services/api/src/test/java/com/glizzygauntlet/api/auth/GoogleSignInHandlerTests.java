@@ -50,7 +50,8 @@ class GoogleSignInHandlerTests {
         .setAttribute(
             GoogleSignInHandler.INTENT_KEY, new GoogleSignInHandler.Intent(null, Instant.now()));
     when(accounts.findOrCreate("google", "subject", "diner@example.test"))
-        .thenReturn(new AccountService.Profile(id, "Diner", false, List.of("google"), List.of()));
+        .thenReturn(
+            new AccountService.Profile(id, "Diner", false, List.of("google"), List.of(), null));
 
     handler.onAuthenticationSuccess(request, response, identity(true));
 

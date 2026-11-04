@@ -4,6 +4,11 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { loadSession } from '../auth/api'
 import { PageHeading } from '../PageHeading'
 import * as api from './api'
+import {
+  CompetitionCover,
+  CompetitionCoverEditor,
+  CompetitionCoverInput,
+} from './CompetitionCover'
 import { FeaturedVenues } from '../directory/DirectoryPages'
 import { CompetitionMeals } from '../meals/MealPages'
 import { Standings } from '../progress/ProgressPages'
@@ -107,6 +112,7 @@ function CompetitionList({
           <div className="competition-grid">
             {list.data.items.map((item) => (
               <article className="competition-card" key={item.id}>
+                <CompetitionCover competition={item} thumbnail />
                 <span className="eyebrow">
                   {phases[item.phase]} /{' '}
                   {item.visibility === 'PUBLIC' ? 'Public' : 'Private'}
@@ -243,6 +249,7 @@ function CompetitionForm({
     initial?.trackingMode ?? 'BOTH',
   )
   const [emails, setEmails] = useState('')
+  const [cover, setCover] = useState<File | null>(null)
   const save = useMutation({
     mutationFn: async () => {
       const settings: api.Settings = {
@@ -276,7 +283,7 @@ function CompetitionForm({
         throw new Error(
           'Enter up to 20 valid email addresses, separated by commas, spaces, or new lines.',
         )
-      return api.createCompetition(settings, recipients)
+      return api.createCompetition(settings, recipients, cover)
     },
     onSuccess: async (result) => {
       await refresh()
@@ -332,6 +339,13 @@ function CompetitionForm({
         value={name}
         onChange={(event) => setName(event.target.value)}
       />
+      {!initial && (
+        <CompetitionCoverInput
+          file={cover}
+          change={setCover}
+          disabled={save.isPending}
+        />
+      )}
       <label htmlFor="competition-rules">Written rules</label>
       <textarea
         id="competition-rules"
@@ -802,6 +816,7 @@ export function CompetitionPage() {
       )}
       {item && !detail.isError && (
         <>
+          <CompetitionCover competition={item} />
           <span className="eyebrow competition-label">
             {phases[item.phase]} /{' '}
             {item.visibility === 'PRIVATE' ? 'Private' : 'Public'}
@@ -842,6 +857,7 @@ export function CompetitionPage() {
                 </Link>
               )}
           </PageHeading>
+          {item.canAdminister && <CompetitionCoverEditor competition={item} />}
           {session.data?.user && !item.allTime && (
             <FeaturedVenues competitionId={id} organizer={item.canAdminister} />
           )}

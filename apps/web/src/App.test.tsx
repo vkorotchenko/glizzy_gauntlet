@@ -28,6 +28,7 @@ const meal: FeedItem = {
   competitionId: 'competition-one',
   competitionName: 'Lunch crew',
   displayName: 'Pickle captain',
+  profilePhotoId: 'author-photo',
   revision: {
     id: 'submitted-revision',
     version: 1,
@@ -207,6 +208,14 @@ describe('home feed', () => {
     ).toBeInTheDocument()
     expect(screen.getAllByText('19.00 inches')).toHaveLength(2)
     for (const card of screen.getAllByRole('article')) {
+      expect(
+        within(card).getByRole('img', {
+          name: "Pickle captain's profile picture",
+        }),
+      ).toHaveAttribute(
+        'src',
+        '/api/v1/profile-photos/author-photo?thumbnail=true',
+      )
       const footer = within(card).getByRole('group', {
         name: 'Meal totals and likes',
       })
@@ -264,6 +273,51 @@ describe('home feed', () => {
       else expect(within(footer).queryByText(/inches/)).not.toBeInTheDocument()
     },
   )
+
+  it('includes own private meal cards alongside competition meals without self-like controls', async () => {
+    vi.mocked(auth.loadSession).mockResolvedValue(signedInSession)
+    const own: FeedItem = {
+      ...meal,
+      id: 'own-meal',
+      competitionId: null,
+      competitionName: null,
+      displayName: 'Diner',
+      profilePhotoId: 'own-avatar',
+      revision: {
+        ...meal.revision,
+        eatenAt: '2026-10-28T13:00:00Z',
+        notes: 'My private lunch.',
+      },
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ items: [own, meal], hasMore: false })),
+    )
+    renderApp()
+    const cards = await screen.findAllByRole('article')
+    expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual([
+      "Diner's meal",
+      "Pickle captain's meal in Lunch crew",
+    ])
+    const ownCard = within(cards[0])
+    expect(ownCard.getByText('Your meal')).toBeVisible()
+    expect(ownCard.getByText('My private lunch.')).toBeVisible()
+    expect(ownCard.getByRole('link', { name: 'View meal' })).toHaveAttribute(
+      'href',
+      '/meals/own-meal',
+    )
+    expect(
+      ownCard.getByRole('img', { name: "Diner's profile picture" }),
+    ).toHaveAttribute('src', '/api/v1/profile-photos/own-avatar?thumbnail=true')
+    expect(ownCard.getByRole('img', { name: 'Meal photo 1' })).toBeVisible()
+    expect(
+      ownCard.queryByRole('button', { name: 'Like' }),
+    ).not.toBeInTheDocument()
+    expect(within(cards[1]).getByRole('button', { name: 'Like' })).toBeVisible()
+    expect(
+      screen.queryByRole('region', { name: 'Sample feed' }),
+    ).not.toBeInTheDocument()
+  })
 
   it('shows two clearly labeled hotdog examples only when the first feed page is empty', async () => {
     vi.mocked(auth.loadSession).mockResolvedValue(signedInSession)

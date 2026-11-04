@@ -338,6 +338,9 @@ h3 {
 }
 
 .account-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 0.85rem;
   font-weight: 700;
   text-underline-offset: 4px;
@@ -569,6 +572,37 @@ h3 {
   color: #fffaf0;
   font-weight: 750;
 }
+.user-avatar {
+  overflow: hidden;
+}
+.user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.header-avatar {
+  width: 28px;
+  height: 28px;
+}
+.profile-avatar,
+.profile-photo-preview {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  font-size: 2rem;
+}
+.profile-photo-picker {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.profile-photo-previews {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+}
 .feed-card-actions {
   flex-wrap: wrap;
   justify-content: space-between;
@@ -584,6 +618,362 @@ h3 {
   align-items: center;
   gap: 12px;
   margin-left: auto;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.meal-editor-page {
+  max-width: 780px;
+}
+.competition-form.meal-editor > fieldset {
+  border: 0;
+  padding: 0;
+}
+.meal-section-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.meal-section-heading h2 {
+  margin: 0;
+}
+.info-button {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #8a795f;
+  border-radius: 50%;
+  background: transparent;
+  color: #18583d;
+  font: inherit;
+  font-weight: 750;
+}
+.meal-popup {
+  position: fixed;
+  inset: 0;
+  width: min(520px, calc(100% - 32px));
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  border: 1px solid #b6a48b;
+  border-radius: 16px;
+  color: inherit;
+  background: #fffaf0;
+  box-shadow: 0 16px 64px #192b2240;
+}
+.meal-popup::backdrop {
+  background: #192b2280;
+}
+.meal-popup-content {
+  padding: 24px;
+}
+.condiment-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 16px;
+}
+.meal-item-list {
+  list-style: none;
+  padding: 0;
+}
+.meal-item-list li {
+  padding: 8px 0;
+}
+.meal-condiment-list {
+  display: block;
+  margin-top: 4px;
+  color: #675944;
+  font-size: 0.9rem;
+}
+.meal-photo-dropzone {
+  display: block;
+  width: 100%;
+  padding: 0;
+  margin: 20px 0;
+  overflow: hidden;
+  border: 2px dashed #b6a48b;
+  border-radius: 12px;
+  background: #f3ead9;
+  color: #18583d;
+  font: inherit;
+}
+.meal-photo-dropzone:hover {
+  border-color: #18583d;
+  background: #e8eddc;
+}
+.meal-photo-placeholder {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 8px;
+  min-height: 220px;
+  padding: 24px 12px;
+}
+.meal-photo-placeholder svg {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 4px;
+}
+.meal-photo-caption {
+  display: block;
+  padding: 8px;
+  font-size: 0.85rem;
+}
+.meal-preview-photos {
+  display: flex;
+}
+.meal-preview-photos img {
+  width: 0;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 240px;
+  object-fit: cover;
+}
+.hot-dog-inputs {
+  margin-top: 32px;
+}
+.hot-dog-rows {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+}
+.hot-dog-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px 36px 44px;
+  gap: 10px;
+  align-items: end;
+  padding: 12px 0;
+  border-bottom: 1px solid #dfd4c2;
+}
+.hot-dog-row.with-inches {
+  grid-template-columns: minmax(0, 1fr) 90px 44px 36px 44px;
+}
+.hot-dog-row label {
+  min-width: 0;
+  margin: 0;
+  font-size: 0.85rem;
+}
+.hot-dog-row label > span {
+  display: block;
+  margin-bottom: 6px;
+}
+.row-icon-button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 46px;
+  padding: 8px;
+  border: 1px solid #b6a48b;
+  border-radius: 6px;
+  background: #fffef9;
+  color: #18583d;
+  font: inherit;
+  font-size: 1.4rem;
+}
+.row-icon-button svg {
+  width: 24px;
+  height: 24px;
+}
+.row-icon-button:hover {
+  background: #eee5d3;
+}
+.condiment-count {
+  position: absolute;
+  top: -6px;
+  right: -5px;
+  display: grid;
+  place-items: center;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 4px;
+  border-radius: 10px;
+  background: #18583d;
+  color: #fffaf0;
+  font-size: 0.7rem;
+}
+.hot-dog-legacy-quantity {
+  grid-column: 1 / -1;
+  font-size: 0.85rem;
+}
+.add-hot-dog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 1px dashed #8a795f;
+  border-radius: 8px;
+  background: transparent;
+  color: #18583d;
+  font: inherit;
+  font-weight: 700;
+}
+.add-hot-dog > span {
+  font-size: 1.5rem;
+}
+.meal-photo-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+.meal-photo-option img {
+  width: 100%;
+  height: 100px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.meal-photo-option .text-button {
+  font-size: 0.85rem;
+}
+.meal-date-time {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.meal-editor .meal-location-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  margin: 16px 0;
+}
+.competition-page .meal-location-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin: 0;
+  border: 1px solid #dfd4c2;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.meal-location-choice:has(input:checked) {
+  border-color: #18583d;
+  background: #e8eddc;
+}
+.competition-page .meal-location-choice input[type='radio'] {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  margin: 0;
+}
+.meal-venue-picker .meal-section-heading {
+  flex-wrap: wrap;
+}
+.venue-view-switch {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid #dfd4c2;
+  border-radius: 8px;
+}
+.venue-view-switch button {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #18583d;
+  font: inherit;
+  font-weight: 700;
+}
+.venue-view-switch button[aria-pressed='true'] {
+  background: #18583d;
+  color: #fffaf0;
+}
+.venue-map-marker {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+}
+.venue-map-marker::before {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border: 3px solid #fffaf0;
+  border-radius: 50%;
+  background: #bd4b2d;
+  box-shadow: 0 1px 5px #0006;
+}
+.venue-map-marker[aria-pressed='true']::before {
+  inset: 5px;
+  background: #18583d;
+}
+.venue-choices {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+}
+.competition-page .venue-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0;
+  padding: 12px;
+  border: 1px solid #dfd4c2;
+  border-radius: 8px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.venue-choice:has(input:checked) {
+  border-color: #18583d;
+  background: #e8eddc;
+}
+.competition-page .venue-choice input[type='radio'] {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+}
+.venue-choice-address {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.85rem;
+  color: #675944;
+}
+.venue-choice small {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.meal-editor :is(button, summary):focus-visible {
+  outline: 3px solid #18583d;
+  outline-offset: 3px;
+}
+@media (max-width: 520px) {
+  .hot-dog-row,
+  .hot-dog-row.with-inches {
+    grid-template-columns: minmax(0, 1fr) 44px 44px 44px;
+    gap: 10px;
+  }
+  .hot-dog-description {
+    grid-column: 1 / -1;
+  }
+  .hot-dog-row:not(.with-inches) .condiment-button {
+    grid-column: 2;
+  }
+  .meal-preview-photos img {
+    height: 170px;
+  }
+  .meal-popup-content {
+    padding: 18px;
+  }
 }
 .like-button {
   display: inline-flex;
@@ -694,6 +1084,30 @@ h3 {
 }
 .competition-label {
   margin-top: 28px;
+}
+.competition-cover {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 7;
+  object-fit: cover;
+  border-radius: 10px;
+  background: #e5d7bd;
+  margin: 20px 0;
+}
+.competition-card > .competition-cover {
+  aspect-ratio: 16 / 9;
+  margin-top: 0;
+}
+.competition-cover-editor {
+  margin: 20px 0;
+}
+.competition-cover-editor > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.competition-cover-picker {
+  min-width: 0;
 }
 .competition-rules {
   white-space: pre-wrap;

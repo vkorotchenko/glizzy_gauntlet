@@ -1,19 +1,25 @@
 package com.glizzygauntlet.api.competitions;
 
 import com.glizzygauntlet.api.auth.SessionAuthentication;
+import com.glizzygauntlet.api.directory.DirectoryException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -79,17 +85,62 @@ public class CompetitionController {
     return competitions.get(id, sessions.currentId(auth));
   }
 
-  @PostMapping("/competitions")
+  @PostMapping(value = "/competitions", consumes = MediaType.APPLICATION_JSON_VALUE)
   @ResponseStatus(HttpStatus.CREATED)
   public CompetitionService.Competition create(
       @Valid @RequestBody Creation body, Authentication auth) {
     return emails.create(sessions.currentId(auth), body.settings(), body.invitationEmails());
   }
 
+  @PostMapping(value = "/competitions", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  @ResponseStatus(HttpStatus.CREATED)
+  public CompetitionService.Competition createWithCover(
+      @Valid @RequestPart("competition") Creation body,
+      @RequestPart MultipartFile file,
+      Authentication auth)
+      throws IOException {
+    return emails.create(
+        sessions.currentId(auth), body.settings(), body.invitationEmails(), imageBytes(file));
+  }
+
   @PutMapping("/competitions/{id}")
   public CompetitionService.Competition update(
       @PathVariable UUID id, @Valid @RequestBody Update body, Authentication auth) {
     return competitions.update(id, sessions.currentId(auth), body.version(), body.settings());
+  }
+
+  @PutMapping(value = "/competitions/{id}/cover", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  public CompetitionService.Competition uploadCover(
+      @PathVariable UUID id,
+      @RequestParam @PositiveOrZero long version,
+      @RequestParam MultipartFile file,
+      Authentication auth)
+      throws IOException {
+    return competitions.uploadCover(id, sessions.currentId(auth), version, imageBytes(file));
+  }
+
+  @DeleteMapping("/competitions/{id}/cover")
+  public CompetitionService.Competition removeCover(
+      @PathVariable UUID id, @RequestParam @PositiveOrZero long version, Authentication auth) {
+    return competitions.removeCover(id, sessions.currentId(auth), version);
+  }
+
+  @GetMapping(value = "/competitions/{id}/cover/{photo}", produces = MediaType.IMAGE_JPEG_VALUE)
+  public ResponseEntity<byte[]> cover(
+      @PathVariable UUID id,
+      @PathVariable UUID photo,
+      @RequestParam(defaultValue = "false") boolean thumbnail,
+      Authentication auth) {
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .header("X-Content-Type-Options", "nosniff")
+        .body(competitions.cover(id, photo, sessions.currentId(auth), thumbnail));
+  }
+
+  private byte[] imageBytes(MultipartFile file) throws IOException {
+    if (file.getSize() > 5 * 1024 * 1024)
+      throw new DirectoryException(HttpStatus.PAYLOAD_TOO_LARGE, "IMAGE_TOO_LARGE");
+    return file.getBytes();
   }
 
   @PostMapping("/competitions/{id}/publish")
@@ -184,10 +235,27 @@ public class CompetitionController {
         .body(new Error(error.getMessage()));
   }
 
+  @ExceptionHandler(DirectoryException.class)
+  ResponseEntity<Error> image(DirectoryException error) {
+    return ResponseEntity.status(error.status())
+        .cacheControl(CacheControl.noStore())
+        .body(new Error(error.getMessage()));
+  }
+
+  @ExceptionHandler(MaxUploadSizeExceededException.class)
+  ResponseEntity<Error> oversized(Exception error) {
+    return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+        .cacheControl(CacheControl.noStore())
+        .body(new Error("IMAGE_TOO_LARGE"));
+  }
+
   @ExceptionHandler({
     MethodArgumentNotValidException.class,
     HttpMessageNotReadableException.class,
-    MethodArgumentTypeMismatchException.class
+    MethodArgumentTypeMismatchException.class,
+    MissingServletRequestPartException.class,
+    org.springframework.web.bind.MissingServletRequestParameterException.class,
+    org.springframework.web.method.annotation.HandlerMethodValidationException.class
   })
   ResponseEntity<Error> invalid(Exception error) {
     return ResponseEntity.badRequest()

@@ -40,6 +40,7 @@ class SecurityConfiguration {
                         "/api/v1/auth/session",
                         "/api/v1/competitions",
                         "/api/v1/competitions/*",
+                        "/api/v1/competitions/*/cover/*",
                         "/api/v1/competitions/*/standings",
                         "/api/v1/competitions/*/recap",
                         "/api/v1/competitions/*/recap/history",
@@ -58,6 +59,8 @@ class SecurityConfiguration {
                     .permitAll()
                     .requestMatchers(
                         "/api/v1/me",
+                        "/api/v1/me/**",
+                        "/api/v1/profile-photos/**",
                         "/api/v1/admin/**",
                         "/api/v1/competitions/**",
                         "/api/v1/competition-invitations/**")

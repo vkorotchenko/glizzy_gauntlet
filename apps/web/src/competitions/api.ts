@@ -38,6 +38,13 @@ const messages: Record<string, string> = {
   EMAIL_DISABLED:
     'Email delivery is unavailable. Leave the invitation list blank or configure email first.',
   INVALID_INVITATION_EMAILS: 'Enter up to 20 valid email addresses.',
+  PHOTO_LIMIT:
+    'Cover photo limit reached (200 competitions per organizer). Remove an unused cover first.',
+  STORAGE_LIMIT: 'Photo storage is full. Contact the site owner.',
+  IMAGE_TOO_LARGE: 'Choose a JPEG or PNG no larger than 5 MiB.',
+  INVALID_IMAGE:
+    'Choose a valid JPEG or PNG: at most 6000 pixels per side and 12 megapixels.',
+  MEDIA_UNAVAILABLE: 'Photo storage is unavailable. Try again later.',
 }
 
 function check(reply: { response: Response; error?: { error: string } }) {
@@ -97,13 +104,53 @@ export async function getCompetition(id: string, signal?: AbortSignal) {
 export async function createCompetition(
   settings: Settings,
   invitationEmails: string[] = [],
+  cover?: File | null,
 ) {
+  const competition = { ...settings, invitationEmails }
+  const form = new FormData()
+  if (cover) {
+    form.append(
+      'competition',
+      new Blob([JSON.stringify(competition)], { type: 'application/json' }),
+    )
+    form.append('file', cover)
+  }
   return data(
     await client().POST('/competitions', {
       params: { header: await csrf() },
-      body: { ...settings, invitationEmails },
+      body: cover ? { competition, file: cover.name } : competition,
+      bodySerializer: cover ? () => form : undefined,
     }),
   )
+}
+
+export async function uploadCompetitionCover(
+  id: string,
+  version: number,
+  file: File,
+) {
+  const form = new FormData()
+  form.append('version', String(version))
+  form.append('file', file)
+  return data(
+    await client().PUT('/competitions/{id}/cover', {
+      params: { path: { id }, header: await csrf() },
+      body: { version, file: file.name },
+      bodySerializer: () => form,
+    }),
+  )
+}
+
+export async function removeCompetitionCover(id: string, version: number) {
+  return data(
+    await client().DELETE('/competitions/{id}/cover', {
+      params: { path: { id }, query: { version }, header: await csrf() },
+    }),
+  )
+}
+
+export function coverPhotoUrl(competition: Competition, thumbnail = false) {
+  return `/api/v1/competitions/${encodeURIComponent(competition.id)}/cover/${encodeURIComponent(competition.coverPhotoId!)}?thumbnail=${thumbnail}`
 }
 
 export async function listInvitationEmails(id: string, signal?: AbortSignal) {

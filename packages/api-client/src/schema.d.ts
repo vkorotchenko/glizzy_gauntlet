@@ -49,7 +49,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Signed-in active members only. Recent nonwithdrawn competitor submission snapshots across joined published competitions, newest eating time first. Own meals, unsubmitted source changes, and unjoined competitions are never included. */
+        /** @description Signed-in users only. Current own source meals, including private meals, combined with nonwithdrawn competitor submission snapshots across actively joined published competitions, newest eating time first. Own meals appear once regardless of sharing, with null competition metadata. Other members' private sources and unjoined competitions are never included. Archived own sources stay in the archive; archived competitor sources retain their visible submitted snapshots. */
         get: operations["getCompetitorFeed"];
         put?: never;
         post?: never;
@@ -577,6 +577,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/competitions/{id}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Organizer-only replacement at any competition phase; all-time requires a global Admin. Uses the shared image sanitizer and storage budget. A new draft and its optional multipart cover are created atomically. */
+        put: operations["uploadCompetitionCover"];
+        post?: never;
+        delete: operations["removeCompetitionCover"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/competitions/{id}/cover/{photo}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                photo: string;
+            };
+            cookie?: never;
+        };
+        /** @description Current cover only, with the same visibility as competition metadata. Public published covers are available to guests; private/draft covers require competition access. Replaced and removed covers are unavailable. Always no-store. */
+        get: operations["getCompetitionCover"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/competitions/{id}/publish": {
         parameters: {
             query?: never;
@@ -870,6 +909,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me/photo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Upload or replace your profile picture. JPEG/PNG up to 5 MiB, sanitized before storage. Omit expectedPhotoId only when no picture exists; stale changes are rejected. */
+        put: operations["uploadProfilePhoto"];
+        post?: never;
+        /** @description Remove your current picture. Omit expectedPhotoId only when no picture exists; stale changes are rejected. */
+        delete: operations["removeProfilePhoto"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/profile-photos/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Current picture only, visible to its owner or signed-in active members sharing a published competition. Never publicly cacheable. Old pictures and unrelated accounts return not found. */
+        get: operations["getProfilePhoto"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/status": {
         parameters: {
             query?: never;
@@ -1054,13 +1128,15 @@ export interface components {
         FeedItem: {
             /**
              * Format: uuid
-             * @description Competition entry ID
+             * @description Own source meal ID when competitionId is null; otherwise a competition entry ID, never another member's private source meal ID. Only competition entry IDs accept reactions.
              */
             id: string;
             /** Format: uuid */
-            competitionId: string;
-            competitionName: string;
+            competitionId: string | null;
+            competitionName: string | null;
             displayName: string;
+            /** Format: uuid */
+            profilePhotoId?: string | null;
             revision: components["schemas"]["MealRevision"];
             scoreExcluded: boolean;
             /** Format: int64 */
@@ -1077,9 +1153,12 @@ export interface components {
         MealItem: {
             name: string;
             wholeQuantity: number;
+            /** @description Length per whole hot dog in hundredths of an inch; zero when length is not recorded. */
             unitHundredths: number;
-            /** @description Less than unitHundredths; each item must have a positive whole quantity or partial length */
+            /** @description Less than unitHundredths, or zero when unitHundredths is zero; each item must have a positive whole quantity or partial length. */
             partialHundredths: number;
+            /** @description Optional descriptive toppings; defaults to an empty list when omitted and never affects scoring. */
+            condiments?: string[];
         };
         MealContent: {
             /**
@@ -1092,7 +1171,7 @@ export interface components {
             /** @description Optional private free-text label; empty or omitted when venueId is selected */
             location?: string;
             notes: string;
-            /** @description Legacy measured item lines. For simple logging send an empty array and explicit totalHundredths and wholeHotDogs instead. Do not mix the two formats. */
+            /** @description Hot dog rows, including optional condiments. Totals are calculated from these items. Older aggregate meals can use an empty array with explicit totalHundredths and wholeHotDogs instead; do not mix the two formats. */
             items: components["schemas"]["MealItem"][];
             /**
              * Format: int64
@@ -1300,6 +1379,11 @@ export interface components {
             /** @description True for the active organizer of an ordinary competition or a global Admin on all-time, including opted-out Admins. Does not grant access to unjoined meal details or other accounts' private competitions. */
             canAdminister: boolean;
             memberCount: number;
+            /**
+             * Format: uuid
+             * @description Optional current cover, stored separately from meal and venue photos. Organizers can update or remove it without changing locked scoring settings.
+             */
+            coverPhotoId?: string | null;
         };
         CompetitionMember: {
             /** Format: uuid */
@@ -1354,6 +1438,8 @@ export interface components {
             /** Format: uuid */
             id: string;
             displayName: string;
+            /** Format: uuid */
+            readonly profilePhotoId?: string | null;
             /**
              * @deprecated
              * @description Compatibility alias for the Admin role. Permissions are stored only in account_roles; new clients must use roles.
@@ -1551,7 +1637,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Up to 20 competition-scoped meal cards; never publicly cacheable */
+            /** @description Up to 20 chronologically ordered own or competition-scoped meal cards; never publicly cacheable */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2462,6 +2548,11 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CompetitionCreation"];
+                "multipart/form-data": {
+                    competition: components["schemas"]["CompetitionCreation"];
+                    /** Format: binary */
+                    file: string;
+                };
             };
         };
         responses: {
@@ -2506,6 +2597,77 @@ export interface operations {
         };
         responses: {
             200: components["responses"]["Competition"];
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    uploadCompetitionCover: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: int64 */
+                    version: number;
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            200: components["responses"]["Competition"];
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    removeCompetitionCover: {
+        parameters: {
+            query: {
+                version: number;
+            };
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["Competition"];
+            default: components["responses"]["CompetitionError"];
+        };
+    };
+    getCompetitionCover: {
+        parameters: {
+            query?: {
+                thumbnail?: boolean;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+                photo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sanitized JPEG; JPEG/PNG input is limited to 5 MiB, 6000 pixels per side and 12 megapixels, then reencoded without metadata to 1600 pixels plus a 400-pixel thumbnail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": string;
+                };
+            };
             default: components["responses"]["CompetitionError"];
         };
     };
@@ -3048,6 +3210,88 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    uploadProfilePhoto: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                    /** Format: uuid */
+                    expectedPhotoId?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated private profile, never publicly cacheable */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Profile"];
+                };
+            };
+            default: components["responses"]["AuthError"];
+        };
+    };
+    removeProfilePhoto: {
+        parameters: {
+            query?: {
+                expectedPhotoId?: string;
+            };
+            header: {
+                "X-CSRF-TOKEN": components["parameters"]["CsrfHeader"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Updated private profile, never publicly cacheable */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Profile"];
+                };
+            };
+            default: components["responses"]["AuthError"];
+        };
+    };
+    getProfilePhoto: {
+        parameters: {
+            query?: {
+                thumbnail?: boolean;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["CompetitionId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sanitized JPEG image */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/jpeg": string;
+                };
+            };
+            default: components["responses"]["AuthError"];
         };
     };
     getStatus: {
