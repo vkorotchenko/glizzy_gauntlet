@@ -4,6 +4,42 @@ These tools prepare a single-host deployment; they do not provision a hostname, 
 
 Use Node.js 24 and Docker Compose on the Docker host. Backup and restore use Docker directly, require the existing project-owned named volumes, and never read an environment file. Do not run maintenance from a remote Docker context: archive bind mounts must refer to the same host filesystem.
 
+## Bootstrap a fresh Ubuntu server
+
+Run these commands **on the server**, as a non-root user with sudo access. The installer supports Ubuntu 22.04, 24.04, 26.04, and 26.10 on x86-64 or ARM64. It is a fresh-host bootstrap, not a production upgrade procedure. Apply Ubuntu security updates and any required reboot separately.
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git
+git clone https://github.com/vkorotchenko/glizzy_gauntlet.git
+cd glizzy_gauntlet
+bash ops/install-ubuntu.sh --domain glizzy-gauntlet.com
+```
+
+The script installs Docker Engine/Compose and Node.js 24 from signed package repositories, enables Docker at boot, adds the current user to the Docker group, and runs `npm ci`. Docker-group membership grants root-equivalent access; only trusted administrators should receive it. Log out and reconnect before using Docker without sudo.
+
+It creates an owner-only `.env` from `.env.example`, sets the requested HTTPS hostname, and generates a random database password without printing it or passing it in command arguments. Existing `.env` files are neither read nor changed, including their passwords and permissions; verify their settings and run `chmod 600 .env` yourself. Symlinked or foreign-owned configuration is rejected. Rerunning can update installed packages, so use the upgrade procedure below for an existing production host.
+
+Firewall settings are unchanged by default. To explicitly allow your SSH port and HTTP/HTTPS, then enable UFW:
+
+```bash
+bash ops/install-ubuntu.sh --domain glizzy-gauntlet.com --ssh-port 2222
+```
+
+Replace `2222` with the actual SSH port. A mismatch with an available `SSH_CONNECTION` is rejected before host changes. Keep your current connection open and verify a second SSH connection. Existing UFW rules are retained, so review them; this is not a firewall audit. Docker-published ports can bypass UFW. Configure the provider/router firewall separately, restrict SSH, and publish only Caddy's TCP 80/443.
+
+The installer **does not deploy the site**, configure DNS, request credentials, or enable sign-in. Point your domain at the server, privately edit `.env` to configure a real provider, and complete the launch gates below. For Google, register `https://glizzy-gauntlet.com/login/oauth2/code/google`.
+
+After verifying providers, capacity, external networking, and recovery preparation:
+
+```bash
+make preflight ENV_FILE=.env
+make deploy ENV_FILE=.env PROD_PROJECT=glizzy-prod
+make deploy-status ENV_FILE=.env PROD_PROJECT=glizzy-prod
+```
+
+If moving existing users, restore PostgreSQL and media together into empty volumes before starting writers. Bootstrap your first Admin as described in the root README, using the production project and base Compose file, not the development override.
+
 ## Check the intended production host
 
 Set runtime configuration privately, then run on the intended **64-bit Linux x86-64 or ARM64 host**:

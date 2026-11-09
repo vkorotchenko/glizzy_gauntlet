@@ -63,6 +63,8 @@ Use `ARGS` for test filters, such as `make test ARGS='--project web'` or `make t
 
 ### Deploy and maintain a production host
 
+For a fresh Ubuntu server, use the [host installer](ops/README.md#bootstrap-a-fresh-ubuntu-server) to install dependencies and prepare private configuration without deploying publicly.
+
 `make up` is local development, not public deployment. After completing every gate in the [operations guide](ops/README.md), run on the intended Linux host:
 
 ```bash
