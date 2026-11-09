@@ -13,14 +13,32 @@ sudo apt-get update
 sudo apt-get install -y git
 git clone https://github.com/vkorotchenko/glizzy_gauntlet.git
 cd glizzy_gauntlet
-bash ops/install-ubuntu.sh --domain glizzy-gauntlet.com
+bash ops/install-ubuntu.sh --interactive
 ```
 
 The script installs Docker Engine/Compose and Node.js 24 from signed package repositories, enables Docker at boot, adds the current user to the Docker group, and runs `npm ci`. Docker-group membership grants root-equivalent access; only trusted administrators should receive it. Log out and reconnect before using Docker without sudo.
 
-It creates an owner-only `.env` from `.env.example`, sets the requested HTTPS hostname, and generates a random database password without printing it or passing it in command arguments. Existing `.env` files are neither read nor changed, including their passwords and permissions; verify their settings and run `chmod 600 .env` yourself. Symlinked or foreign-owned configuration is rejected. Rerunning can update installed packages, so use the upgrade procedure below for an existing production host.
+The wizard prompts for the public hostname, authenticated STARTTLS SMTP server/port, sender, username, hidden password, optional Google Web client credentials, photo-storage budget, firewall configuration, and DHCP reservation guidance. SMTP uses authentication and required STARTTLS; port 465 is rejected because implicit TLS is not configured. Register your sender/domain with the provider and verify real inbox delivery separately.
 
-Firewall settings are unchanged by default. To explicitly allow your SSH port and HTTP/HTTPS, then enable UFW:
+It creates an owner-only `.env` from `.env.example` and generates a random database password without printing it or passing it in command arguments. Passwords and Google secrets are read without terminal echo, shell tracing is disabled, and entered values are escaped for Compose, including dollar signs, quotes, and backslashes.
+
+On an existing host, rerun **only configuration**, without reinstalling/upgrading packages:
+
+```bash
+bash ops/install-ubuntu.sh --interactive --configure-only
+```
+
+Changing an existing `.env` requires explicit consent. The wizard preserves the original contents and database password, appends selected overrides (last definition wins), validates the private candidate with Compose without printing it, and replaces the file atomically with owner-only permissions. An observed concurrent edit aborts the replacement. Original values, including superseded credentials, remain in earlier sections; remove retired credentials privately when appropriate. Declining a provider prompt keeps its existing settings rather than disabling it. No provider is enabled by default in a new file.
+
+For unattended bootstrap, the original interface remains available:
+
+```bash
+bash ops/install-ubuntu.sh --domain glizzy-gauntlet.com
+```
+
+Unattended runs never read or change existing `.env` files or their permissions. Symlinked or foreign-owned configuration is rejected in all modes. Rerunning bootstrap can update installed packages, so use configuration-only mode or the upgrade procedure below for an existing production host.
+
+Firewall settings are unchanged unless selected in the wizard or explicitly requested by flag. To allow your SSH port and HTTP/HTTPS, then enable UFW:
 
 ```bash
 bash ops/install-ubuntu.sh --domain glizzy-gauntlet.com --ssh-port 2222
@@ -28,7 +46,11 @@ bash ops/install-ubuntu.sh --domain glizzy-gauntlet.com --ssh-port 2222
 
 Replace `2222` with the actual SSH port. A mismatch with an available `SSH_CONNECTION` is rejected before host changes. Keep your current connection open and verify a second SSH connection. Existing UFW rules are retained, so review them; this is not a firewall audit. Docker-published ports can bypass UFW. Configure the provider/router firewall separately, restrict SSH, and publish only Caddy's TCP 80/443.
 
-The installer **does not deploy the site**, configure DNS, request credentials, or enable sign-in. Point your domain at the server, privately edit `.env` to configure a real provider, and complete the launch gates below. For Google, register `https://glizzy-gauntlet.com/login/oauth2/code/google`.
+The DHCP step discovers the default-route interface, current LAN IPv4 address, MAC address, and gateway, then explains how to add that address as a reservation/static lease on your router or DHCP server. It distinguishes operator confirmation from verified reservation status. Ubuntu may use a DHCP client ID/DUID rather than the MAC; follow your router's requirements. Missing network details leave the reservation explicitly pending.
+
+**A DHCP reservation cannot be created generically from the Ubuntu server.** This wizard does not collect router credentials, call a router API, edit Netplan, assign a static IP, renew a lease, or restart networking. Save the reservation in your router, check for conflicts, and keep the current address during SSH setup. On cloud hosts, use the provider's reserved-IP feature. LAN reservation does not reserve a public/WAN IP: DNS still points to the public address, and a home router must forward TCP 80/443 to the reserved LAN address.
+
+The installer **does not deploy the site**, configure DNS, verify provider authorization, or send a test email. Complete the launch gates below. For Google, register `https://glizzy-gauntlet.com/login/oauth2/code/google`.
 
 After verifying providers, capacity, external networking, and recovery preparation:
 

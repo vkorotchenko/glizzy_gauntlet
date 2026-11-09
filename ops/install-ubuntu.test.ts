@@ -18,6 +18,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 const script = fileURLToPath(new URL('./install-ubuntu.sh', import.meta.url))
 const template = fileURLToPath(new URL('../.env.example', import.meta.url))
+const composeAvailable =
+  spawnSync('docker', ['compose', 'version']).status === 0
 const temporary: string[] = []
 type Call = { command: string; args: string[]; input: string }
 
@@ -67,6 +69,9 @@ if (command === 'openssl') {
   console.log('synthetic-database-password-never-display')
 }
 if (command === 'ln') fs.linkSync(args.at(-2), args.at(-1))
+if (command === 'mv') fs.renameSync(args.at(-2), args.at(-1))
+if (command === 'ip') console.log(args.includes('route') ? process.env.TEST_ROUTE : process.env.TEST_LINK)
+if (command === 'docker' && args.includes('config') && process.env.RACE_CONFIG === 'edit') fs.appendFileSync('.env', '# concurrent edit\\n')
 if (command === 'curl' || command === 'gpg') fs.writeFileSync(args[args.indexOf('-o') + 1], 'synthetic public signing key')
 `,
   )
@@ -83,6 +88,8 @@ if (command === 'curl' || command === 'gpg') fs.writeFileSync(args[args.indexOf(
       'npm',
       'openssl',
       'ln',
+      'mv',
+      'ip',
     ].map((command) =>
       writeFile(
         join(bin, command),
@@ -96,11 +103,13 @@ if (command === 'curl' || command === 'gpg') fs.writeFileSync(args[args.indexOf(
     run(
       args = ['--domain', 'glizzy-gauntlet.com'],
       environment: NodeJS.ProcessEnv = {},
+      input = '',
     ) {
       return spawnSync('bash', [join(repo, 'ops/install-ubuntu.sh'), ...args], {
         cwd: root,
         encoding: 'utf8',
         timeout: 15000,
+        input,
         env: {
           ...process.env,
           PATH: `${bin}${delimiter}${process.env.PATH}`,
@@ -114,6 +123,9 @@ if (command === 'curl' || command === 'gpg') fs.writeFileSync(args[args.indexOf(
           SSH_CONNECTION: '',
           FAIL_COMMAND: '',
           RACE_CONFIG: '',
+          TEST_ROUTE: '1.1.1.1 via 192.0.2.1 dev ens3 src 192.0.2.10',
+          TEST_LINK:
+            '2: ens3: <UP> link/ether 02:00:00:00:00:01 brd ff:ff:ff:ff:ff:ff',
           ...environment,
         },
       })
@@ -300,4 +312,182 @@ describe('Ubuntu host bootstrap', () => {
       ).toBe(false)
     },
   )
+
+  it('configures providers privately and guides router-side reservation without changing networking', async () => {
+    const host = await workspace()
+    const password =
+      'synthetic $NOT_EXPANDED ${ALSO_NOT_EXPANDED} # "quote" \'apostrophe\' \\'
+    const googleSecret = 'synthetic-google-secret'
+    const result = host.run(
+      ['--interactive', '--configure-only'],
+      {},
+      [
+        '',
+        'y',
+        'smtp.example.test',
+        '465',
+        '587',
+        'sender@example.test',
+        'smtp-user',
+        password,
+        'y',
+        'synthetic.apps.googleusercontent.com',
+        googleSecret,
+        '1024',
+        'n',
+        'y',
+        'n',
+      ].join('\n') + '\n',
+    )
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.stderr).toContain('Enter a STARTTLS port')
+    const config = await readFile(join(host.repo, '.env'), 'utf8')
+    expect(config).toContain(
+      'EMAIL_ENABLED=true\nSMTP_AUTH=true\nSMTP_STARTTLS=true\n',
+    )
+    expect(config).toContain('GOOGLE_ENABLED=true\n')
+    expect(config).toContain('MEDIA_MAX_BYTES="1073741824"')
+    expect((await lstat(join(host.repo, '.env'))).mode & 0o777).toBe(0o600)
+    expect(result.stdout + result.stderr).not.toContain(password)
+    expect(result.stdout + result.stderr).not.toContain(googleSecret)
+    expect(result.stdout).toContain('Current LAN IPv4: 192.0.2.10')
+    expect(result.stdout).toContain('MAC address: 02:00:00:00:00:01')
+    expect(result.stdout).toContain('Reservation remains pending')
+    const calls = await host.calls()
+    expect(JSON.stringify(calls)).not.toContain(password)
+    expect(JSON.stringify(calls)).not.toContain(googleSecret)
+    expect(
+      calls.some((call) => ['apt-get', 'npm', 'ufw'].includes(call.command)),
+    ).toBe(false)
+    expect(
+      calls.filter((call) => call.command === 'ip').map((call) => call.args),
+    ).toEqual([
+      ['-4', 'route', 'get', '1.1.1.1'],
+      ['-o', 'link', 'show', 'dev', 'ens3'],
+    ])
+    if (composeAvailable) {
+      const compose = join(host.repo, 'literal-compose.yaml')
+      await writeFile(
+        compose,
+        'services:\n  probe:\n    image: busybox\n    environment:\n      SMTP_PASSWORD: ${SMTP_PASSWORD}\n      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}\n',
+      )
+      // Config JSON re-escapes dollars; inspect the actual interpolation environment.
+      const parsed = spawnSync(
+        'docker',
+        [
+          'compose',
+          '--env-file',
+          join(host.repo, '.env'),
+          '-f',
+          compose,
+          'config',
+          '--environment',
+        ],
+        {
+          cwd: host.repo,
+          encoding: 'utf8',
+          env: { PATH: process.env.PATH, HOME: process.env.HOME },
+        },
+      )
+      expect(
+        parsed.status,
+        'Real Compose parsing of synthetic credentials failed',
+      ).toBe(0)
+      const environment = parsed.stdout.split('\n')
+      expect(environment).toContain(`SMTP_PASSWORD=${password}`)
+      expect(environment).toContain(`GOOGLE_CLIENT_SECRET=${googleSecret}`)
+    }
+  })
+
+  it.each([false, true])(
+    'requires consent to update existing configuration (consent: %s)',
+    async (consent) => {
+      const host = await workspace()
+      const path = join(host.repo, '.env')
+      const original =
+        'POSTGRES_PASSWORD=synthetic-existing\nSMTP_PASSWORD=synthetic-existing-smtp\nCUSTOM_SETTING=keep-me\n'
+      await writeFile(path, original)
+      const input = consent
+        ? ['', 'y', 'n', 'n', '', 'n', 'n']
+        : ['', 'n', 'n', 'n']
+      const result = host.run(
+        ['--interactive', '--configure-only'],
+        {},
+        input.join('\n') + '\n',
+      )
+      expect(result.status, result.stderr).toBe(0)
+      const updated = await readFile(path, 'utf8')
+      if (consent) {
+        expect(updated.startsWith(original)).toBe(true)
+        expect(updated).toContain(
+          'PUBLIC_BASE_URL="https://glizzy-gauntlet.com"',
+        )
+      } else {
+        expect(updated).toBe(original)
+      }
+      expect(result.stdout + result.stderr).not.toContain('synthetic-existing')
+      expect(
+        (await host.calls()).some((call) => call.command === 'openssl'),
+      ).toBe(false)
+    },
+  )
+
+  it.each(['reject', 'edit'])(
+    'preserves existing configuration on candidate failure or concurrent edits (%s)',
+    async (failure) => {
+      const host = await workspace()
+      const path = join(host.repo, '.env')
+      const original = 'POSTGRES_PASSWORD=synthetic-existing\n'
+      await writeFile(path, original)
+      const result = host.run(
+        ['--interactive', '--configure-only'],
+        failure === 'reject'
+          ? { FAIL_COMMAND: 'docker' }
+          : { RACE_CONFIG: 'edit' },
+        ['', 'y', 'n', 'n', '', 'n', 'n'].join('\n') + '\n',
+      )
+      expect(result.status).not.toBe(0)
+      expect(await readFile(path, 'utf8')).toBe(
+        original + (failure === 'edit' ? '# concurrent edit\n' : ''),
+      )
+    },
+  )
+
+  it('handles unavailable network discovery without claiming a reservation', async () => {
+    const host = await workspace()
+    const result = host.run(
+      ['--interactive', '--configure-only'],
+      { TEST_ROUTE: '' },
+      ['', 'n', 'n', '', 'n', 'y'].join('\n') + '\n',
+    )
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.stdout).toContain('no reservation has been made')
+  })
+
+  it('cancels on incomplete input before package or configuration changes', async () => {
+    const host = await workspace()
+    const result = host.run(['--interactive'], {}, '\ny\n')
+    expect(result.status).not.toBe(0)
+    await expect(lstat(join(host.repo, '.env'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
+
+    expect(
+      (await host.calls()).some((call) => call.command === 'apt-get'),
+    ).toBe(false)
+  })
+
+  it('validates the SSH port entered in the wizard before enabling the firewall', async () => {
+    const host = await workspace()
+    const result = host.run(
+      ['--interactive', '--configure-only'],
+      { SSH_CONNECTION: '192.0.2.1 40000 192.0.2.10 2222' },
+      ['', 'n', 'n', '', 'y', '22', '2222', 'n'].join('\n') + '\n',
+    )
+    expect(result.status, result.stderr).toBe(0)
+    expect(result.stderr).toContain('matching the current SSH session')
+    const calls = (await host.calls()).filter((call) => call.command === 'ufw')
+    expect(calls[0].args).toEqual(['allow', '2222/tcp'])
+    expect(calls.at(-1)?.args).toEqual(['--force', 'enable'])
+  })
 })
