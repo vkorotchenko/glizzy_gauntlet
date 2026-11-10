@@ -358,6 +358,15 @@ test('shares explicit snapshots, preserves a closed competition, and revokes pho
   try {
     const member = await memberContext.newPage()
     await signIn(member, request, `meal-member-${info.project.name}`)
+    // Keep this feed independent of parallel all-time competition submissions.
+    expect(
+      (
+        await member.request.post(
+          '/api/v1/competitions/00000000-0000-4000-8000-000000000000/leave',
+          { headers: await headers(member) },
+        )
+      ).status(),
+    ).toBe(200)
     await member.goto(a.inviteUrl)
     await member.getByRole('button', { name: 'Accept invitation' }).click()
     await expect(
