@@ -263,57 +263,105 @@ describe('account screens', () => {
     )
   })
 
-  it('updates the navigation after confirming sign-in without reloading', async () => {
-    const profile = {
-      id: 'test-user',
-      displayName: 'Diner',
-      providers: ['email'],
-      siteOwner: false,
-    }
-    let signedIn = false
+  it.each(['sign-in', 'link'] as const)(
+    'updates the navigation and landing page after confirming %s without reloading',
+    async (purpose) => {
+      const profile = {
+        id: 'test-user',
+        displayName: 'Diner',
+        providers: ['email'],
+        siteOwner: false,
+      }
+      let signedIn = purpose === 'link'
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (request: Request) => {
+          if (new URL(request.url).pathname === '/api/v1/feed')
+            return Response.json({
+              items: [],
+              page: 0,
+              size: 20,
+              hasMore: false,
+            })
+          if (request.method === 'GET')
+            return Response.json({
+              ...session,
+              user: signedIn ? profile : null,
+            })
+          if (request.url.endsWith('/inspect'))
+            return Response.json({
+              email: 'diner@example.test',
+              purpose,
+            })
+          if (request.url.endsWith('/confirm')) {
+            signedIn = true
+            return Response.json(profile)
+          }
+          throw new Error(`Unexpected request: ${request.url}`)
+        }),
+      )
+      show(`/sign-in/confirm?token=${'A'.repeat(43)}`)
+      const navigation = within(
+        screen.getByRole('navigation', { name: 'Main navigation' }),
+      )
+      expect(
+        await navigation.findByRole('link', {
+          name: purpose === 'link' ? 'My account' : 'Sign in',
+        }),
+      ).toBeInTheDocument()
+
+      fireEvent.click(
+        await screen.findByRole('button', {
+          name: purpose === 'link' ? 'Confirm email link' : 'Confirm sign-in',
+        }),
+      )
+
+      expect(
+        await navigation.findByRole('link', { name: 'My account' }),
+      ).toBeInTheDocument()
+      expect(
+        navigation.queryByRole('link', { name: 'My meals' }),
+      ).not.toBeInTheDocument()
+      expect(
+        await screen.findByRole('heading', {
+          name: purpose === 'link' ? 'Your account' : 'Your feed',
+        }),
+      ).toBeVisible()
+      if (purpose === 'sign-in') {
+        expect(navigation.getByRole('link', { name: 'Feed' })).toHaveAttribute(
+          'aria-current',
+          'page',
+        )
+      }
+      expect(
+        navigation.queryByRole('link', { name: 'Sign in' }),
+      ).not.toBeInTheDocument()
+    },
+  )
+
+  it('sends an already signed-in visitor from the sign-in page to the main feed', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (request: Request) => {
-        if (request.method === 'GET')
-          return Response.json({
-            ...session,
-            user: signedIn ? profile : null,
-          })
-        if (request.url.endsWith('/inspect'))
-          return Response.json({
-            email: 'diner@example.test',
-            purpose: 'sign-in',
-          })
-        if (request.url.endsWith('/confirm')) {
-          signedIn = true
-          return Response.json(profile)
-        }
-        throw new Error(`Unexpected request: ${request.url}`)
-      }),
+      vi.fn(async (request: Request) =>
+        request.url.endsWith('/auth/session')
+          ? Response.json({
+              ...session,
+              user: {
+                id: 'test-user',
+                displayName: 'Diner',
+                providers: ['email'],
+                siteOwner: false,
+              },
+            })
+          : Response.json({ items: [], page: 0, size: 20, hasMore: false }),
+      ),
     )
-    show(`/sign-in/confirm?token=${'A'.repeat(43)}`)
-    const navigation = within(
-      screen.getByRole('navigation', { name: 'Main navigation' }),
-    )
+    show('/sign-in')
     expect(
-      navigation.getByRole('link', { name: 'Sign in' }),
-    ).toBeInTheDocument()
-
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Confirm sign-in' }),
-    )
-
-    expect(
-      await navigation.findByRole('link', { name: 'My account' }),
-    ).toBeInTheDocument()
-    expect(
-      navigation.queryByRole('link', { name: 'My meals' }),
-    ).not.toBeInTheDocument()
-    expect(
-      await screen.findByRole('navigation', { name: 'Account navigation' }),
+      await screen.findByRole('heading', { name: 'Your feed' }),
     ).toBeVisible()
     expect(
-      navigation.queryByRole('link', { name: 'Sign in' }),
+      screen.queryByRole('heading', { name: 'Sign in to your crew.' }),
     ).not.toBeInTheDocument()
   })
 

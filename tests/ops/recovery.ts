@@ -199,6 +199,8 @@ try {
   )
   await page.goto(link)
   await page.getByRole('button', { name: 'Confirm sign-in' }).click()
+  await page.waitForURL(new URL('/', origin).href)
+  await page.getByRole('link', { name: 'My account', exact: true }).click()
   await page.getByLabel('Display name').fill('Recovery captain')
   await page.getByRole('button', { name: 'Save display name' }).click()
   await page

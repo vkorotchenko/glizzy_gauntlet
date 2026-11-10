@@ -46,6 +46,8 @@ async function signIn(
   expect(link).toBeTruthy()
   await page.goto(link!)
   await page.getByRole('button', { name: 'Confirm sign-in' }).click()
+  await expect(page).toHaveURL('/')
+  await page.getByRole('link', { name: 'My account', exact: true }).click()
   await page.getByLabel('Display name').fill(name)
   await page.getByRole('button', { name: 'Save display name' }).click()
   await expect(page.getByRole('status')).toHaveText('Display name saved.')

@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -37,8 +39,10 @@ class GoogleSignInHandlerTests {
     assertThat(response.getRedirectedUrl()).isEqualTo("/account?error=google");
   }
 
-  @Test
-  void acceptsOnlyVerifiedGoogleEmailAndConvertsTheIdentityToALocalSession() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void acceptsOnlyVerifiedGoogleEmailAndConvertsTheIdentityToALocalSession(boolean linking)
+      throws Exception {
     var accounts = mock(AccountService.class);
     var sessions = mock(SessionAuthentication.class);
     var handler = new GoogleSignInHandler(accounts, sessions);
@@ -48,15 +52,20 @@ class GoogleSignInHandlerTests {
     request
         .getSession()
         .setAttribute(
-            GoogleSignInHandler.INTENT_KEY, new GoogleSignInHandler.Intent(null, Instant.now()));
-    when(accounts.findOrCreate("google", "subject", "diner@example.test"))
-        .thenReturn(
-            new AccountService.Profile(id, "Diner", false, List.of("google"), List.of(), null));
+            GoogleSignInHandler.INTENT_KEY,
+            new GoogleSignInHandler.Intent(linking ? id : null, Instant.now()));
+    var profile =
+        new AccountService.Profile(id, "Diner", false, List.of("google"), List.of(), null);
+    if (linking) {
+      when(accounts.link(id, "google", "subject", "diner@example.test")).thenReturn(profile);
+    } else {
+      when(accounts.findOrCreate("google", "subject", "diner@example.test")).thenReturn(profile);
+    }
 
     handler.onAuthenticationSuccess(request, response, identity(true));
 
     verify(sessions).signIn(id, request, response);
-    assertThat(response.getRedirectedUrl()).isEqualTo("/account");
+    assertThat(response.getRedirectedUrl()).isEqualTo(linking ? "/account" : "/");
     assertThat(request.getSession().getAttribute(GoogleSignInHandler.INTENT_KEY)).isNull();
   }
 
