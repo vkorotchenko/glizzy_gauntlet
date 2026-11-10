@@ -1,5 +1,6 @@
 package com.glizzygauntlet.api.meals;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.glizzygauntlet.api.competitions.CompetitionException;
 import com.glizzygauntlet.api.competitions.CompetitionService;
 import com.glizzygauntlet.api.directory.DirectoryException;
@@ -93,7 +94,12 @@ public class MealService {
       @NotNull UUID requestId,
       @NotNull @PositiveOrZero Long version,
       @NotNull @Valid Content content,
-      @NotNull @Size(max = 20) List<@NotNull UUID> competitionIds) {}
+      @NotNull @Size(max = 20) List<@NotNull UUID> competitionIds,
+      @JsonInclude(JsonInclude.Include.NON_NULL) Boolean privateMeal) {
+    public Save(UUID requestId, Long version, Content content, List<UUID> competitionIds) {
+      this(requestId, version, content, competitionIds, null);
+    }
+  }
 
   public record Change(@NotNull UUID requestId, @NotNull @Positive Long version) {}
 
@@ -121,7 +127,12 @@ public class MealService {
       boolean acceptsChanges) {}
 
   public record Meal(
-      UUID id, long version, boolean archived, Revision revision, List<Submission> submissions) {}
+      UUID id,
+      long version,
+      boolean archived,
+      boolean privateMeal,
+      Revision revision,
+      List<Submission> submissions) {}
 
   public record MealPage(List<Meal> items, boolean hasMore) {}
 
@@ -155,7 +166,8 @@ public class MealService {
 
   public record Reaction(long reactionCount, boolean reacted) {}
 
-  private record Row(UUID id, UUID owner, long version, boolean archived, UUID revision) {}
+  private record Row(
+      UUID id, UUID owner, long version, boolean archived, boolean privateMeal, UUID revision) {}
 
   private record EntryRow(
       UUID id, UUID competition, UUID revision, boolean withdrawn, long version) {}
@@ -208,9 +220,12 @@ public class MealService {
     validate(content);
     var targets = new HashSet<>(save.competitionIds());
     if (targets.size() != save.competitionIds().size()) throw invalid();
+    boolean privateMeal =
+        save.privateMeal() == null ? current != null && current.privateMeal() : save.privateMeal();
+    if (privateMeal && !targets.isEmpty()) throw bad("PRIVATE_MEAL_TARGETS");
     UUID meal = current == null ? UUID.randomUUID() : id;
     var affected = new HashSet<>(targets);
-    if (!targets.isEmpty() && current != null)
+    if ((privateMeal || !targets.isEmpty()) && current != null)
       affected.addAll(
           database.queryForList(
               "SELECT competition_id FROM competition_entries WHERE meal_id = ? AND NOT withdrawn",
@@ -218,6 +233,15 @@ public class MealService {
               meal));
     lockCompetitions(affected);
     Instant now = now();
+    var withdrawals = new ArrayList<EntryRow>();
+    if (privateMeal)
+      for (UUID competition : affected) {
+        var entry = entry(meal, competition);
+        if (entry != null && !entry.withdrawn()) {
+          writable(competition, user, now);
+          withdrawals.add(entry);
+        }
+      }
     Instant eatenAt =
         content.eatenAt() == null ? now.truncatedTo(ChronoUnit.MILLIS) : content.eatenAt();
     if (eatenAt.isAfter(now)
@@ -246,7 +270,7 @@ public class MealService {
     }
     var sharingTargets = new HashSet<>(affected);
     sharingTargets.remove(CompetitionService.ALL_TIME_ID);
-    if (sharingTargets.size() > 1)
+    if (!privateMeal && sharingTargets.size() > 1)
       for (UUID target : sharingTargets) {
         if (!Boolean.TRUE.equals(
             database.queryForObject(
@@ -306,7 +330,12 @@ public class MealService {
           revision,
           photo);
     database.update(
-        "UPDATE meals SET current_revision = ?, version = ? WHERE id = ?", revision, version, meal);
+        "UPDATE meals SET current_revision = ?, version = ?, private_meal = ? WHERE id = ?",
+        revision,
+        version,
+        privateMeal,
+        meal);
+    for (var entry : withdrawals) withdrawEntry(entry, user);
     for (var competition : targetCompetitions.values()) submit(meal, user, revision, competition);
     remember(user, save.requestId(), fingerprint, meal);
     return view(owned(meal, user, false));
@@ -336,12 +365,7 @@ public class MealService {
     var entry = entry(id, competition);
     if (entry == null) throw new MealException(HttpStatus.NOT_FOUND, "NOT_FOUND", null);
     if (entry.version() != change.version()) throw error("VERSION_CONFLICT");
-    if (!entry.withdrawn()) {
-      database.update(
-          "UPDATE competition_entries SET withdrawn = TRUE, version = version + 1 WHERE id = ?",
-          entry.id());
-      event(entry.id(), user, "WITHDRAWN", entry.revision(), entry.revision(), false, true);
-    }
+    if (!entry.withdrawn()) withdrawEntry(entry, user);
     remember(user, change.requestId(), fingerprint, id);
     return view(owned(id, user, false));
   }
@@ -580,6 +604,13 @@ public class MealService {
         false);
   }
 
+  private void withdrawEntry(EntryRow entry, UUID user) {
+    database.update(
+        "UPDATE competition_entries SET withdrawn = TRUE, version = version + 1 WHERE id = ?",
+        entry.id());
+    event(entry.id(), user, "WITHDRAWN", entry.revision(), entry.revision(), false, true);
+  }
+
   private void event(
       UUID entry,
       UUID user,
@@ -706,7 +737,13 @@ public class MealService {
                     rs.getBoolean("writable")),
             row.owner(),
             row.id());
-    return new Meal(row.id(), row.version(), row.archived(), revision(row.revision()), submissions);
+    return new Meal(
+        row.id(),
+        row.version(),
+        row.archived(),
+        row.privateMeal(),
+        revision(row.revision()),
+        submissions);
   }
 
   private Revision revision(UUID id) {
@@ -757,6 +794,7 @@ public class MealService {
         rs.getObject("owner_id", UUID.class),
         rs.getLong("version"),
         rs.getBoolean("archived"),
+        rs.getBoolean("private_meal"),
         rs.getObject("current_revision", UUID.class));
   }
 

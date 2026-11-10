@@ -28,6 +28,8 @@ const messages: Record<string, string> = {
   REQUEST_CONFLICT:
     'This retry does not match the original request. Reload before trying again.',
   MEAL_ARCHIVED: 'Archived sources cannot be edited or submitted again.',
+  PRIVATE_MEAL_TARGETS:
+    'Private meals cannot be submitted to competitions. Turn off private mode before sharing.',
   TARGET_UNAVAILABLE:
     'A selected competition is unavailable, unpublished, or not joined. Nothing was saved.',
   SUBMISSIONS_CLOSED:

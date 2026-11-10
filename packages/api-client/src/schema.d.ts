@@ -1194,8 +1194,10 @@ export interface components {
              */
             version: number;
             content: components["schemas"]["MealContent"];
-            /** @description Explicit targets to submit/update atomically; unselected existing snapshots are untouched. All nonwithdrawn affected competitions must allow sharing. Active membership and eating/submission windows are checked using database time after ordered locks. */
+            /** @description Explicit targets to submit/update atomically; unselected existing snapshots are untouched unless privateMeal is true. Must be empty in private mode. All nonwithdrawn affected competitions must allow sharing. Active membership and eating/submission windows are checked using database time after ordered locks. */
             competitionIds: string[];
+            /** @description Explicit private mode; defaults to false on create and preserves the stored choice on update when omitted. Private meals cannot have competition targets and do not count toward any competition totals. Enabling this atomically withdraws existing open submissions; closed or unavailable submissions reject the entire save. Set false explicitly before sharing a private meal again. */
+            privateMeal?: boolean;
         };
         MealRevision: {
             /** Format: uuid */
@@ -1236,6 +1238,8 @@ export interface components {
             /** Format: int64 */
             version: number;
             archived: boolean;
+            /** @description Persisted private mode; no active competition submissions or competition score contribution while true. False permits explicit sharing but does not publish the source meal automatically. */
+            privateMeal: boolean;
             revision: components["schemas"]["MealRevision"];
             submissions: components["schemas"]["MealSubmission"][];
         };

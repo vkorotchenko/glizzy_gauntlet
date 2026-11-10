@@ -29,7 +29,9 @@ In **Profile settings**, upload, replace, or remove your profile picture (JPEG/P
 
 Open **Competitions** to see your joined events above public discovery. **My competitions** in your account separates **Competitions I administer** from **Other competitions**, including drafts and past events without duplicate cards. Create a draft, choose its visibility, time zone, dates, written rules, and sharing policy, optionally add invitee emails, then publish it when ready.
 
-**My account** has persistent tabs for **Profile settings**, **My venues**, **My competitions**, and **My feed**. Open **My feed**, then **Log a meal** to record hot dog count and/or total measured inches. Photos, location, notes, and eating time are optional. Saving privately does not submit to a competition: explicitly select each eligible competition when saving. The old `/meals` link redirects to the account's personal feed.
+**My account** has persistent tabs for **Profile settings**, **My venues**, **My competitions**, and **My feed**. Open **My feed**, then **Log a meal** to record hot dog count and/or total measured inches. Photos, location, notes, and eating time are optional. Eligible joined competitions are selected by default; review the sharing choices or keep the meal private before saving. The old `/meals` link redirects to the account's personal feed.
+
+Select **Keep this meal private** to save only for yourself, even while participating in public competitions. Private meals do not count toward any competition totals, including the all-time leaderboard. This choice stays selected when you edit the meal. Making a previously shared meal private withdraws its open submissions; closed or unavailable submissions must remain unchanged, so they block that change. Turning private mode off lets you explicitly share the meal again.
 
 Mailpit contains sign-in links and competition invitations. It is development-only, binds to loopback, and must never be exposed publicly. Google remains unavailable until you configure your own Google OAuth client.
 

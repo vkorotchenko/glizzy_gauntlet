@@ -161,12 +161,18 @@ export function MealsPage() {
 }
 
 function Targets({
+  privateMeal,
+  changePrivacy,
+  submissions,
   all,
   changeAll,
   selected,
   change,
   competitions,
 }: {
+  privateMeal: boolean
+  changePrivacy: (privateMeal: boolean) => void
+  submissions: api.Submission[]
   all: boolean
   changeAll: (all: boolean) => void
   selected: string[]
@@ -175,6 +181,10 @@ function Targets({
 }) {
   const [page, setPage] = useState(0)
   const eligible = competitions.slice(page * 20, (page + 1) * 20)
+  const activeSubmissions = submissions.filter((entry) => !entry.withdrawn)
+  const privacyBlocked = activeSubmissions.some(
+    (entry) => !entry.acceptsChanges,
+  )
   return (
     <section className="competition-section">
       <div className="meal-section-heading">
@@ -186,7 +196,8 @@ function Targets({
           </p>
           <p>
             Unselected existing submissions stay unchanged; removing a checkmark
-            does not withdraw a previous submission.
+            does not withdraw a previous submission. Keeping the meal private
+            instead withdraws all open submissions.
           </p>
           <p>
             All affected limited-time competitions must permit sharing. The
@@ -198,64 +209,97 @@ function Targets({
       <label className="checkbox-label">
         <input
           type="checkbox"
-          checked={all}
-          onChange={(event) => changeAll(event.target.checked)}
+          checked={privateMeal}
+          disabled={privacyBlocked}
+          aria-describedby="meal-privacy-note"
+          onChange={(event) => changePrivacy(event.target.checked)}
         />
-        Share with all eligible competitions
+        Keep this meal private
       </label>
-      <p role="status">{selected.length} selected</p>
-      {!competitions.length && (
-        <p>No open joined competitions; this meal stays private.</p>
-      )}
-      {selected.length > 20 && (
-        <p role="alert">
-          Choose specific competitions to share with at most 20 at a time.
+      <p id="meal-privacy-note" className="form-note">
+        Private meals are visible only to you and do not count toward any
+        competition totals, including public competitions and the all-time
+        leaderboard.
+      </p>
+      {privacyBlocked && (
+        <p className="form-notice">
+          This meal has closed or unavailable submissions and cannot be made
+          fully private. You can still save edits without changing those
+          existing snapshots.
         </p>
       )}
-      {!all && (
-        <div role="group" aria-label="Choose competitions">
-          {eligible.map((item) => (
-            <div key={item.id}>
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(item.id)}
-                  disabled={
-                    !selected.includes(item.id) && selected.length >= 20
-                  }
-                  onChange={(event) =>
-                    change(
-                      event.target.checked
-                        ? [...selected, item.id]
-                        : selected.filter((id) => id !== item.id),
-                    )
-                  }
-                />
-                Submit to {item.name}
-              </label>
-              <details>
-                <summary>Rules and dates for {item.name}</summary>
-                <p>{item.rules || 'No additional written rules.'}</p>
-                <p>
-                  {formatTime(item.startsAt, item.timeZone)} to{' '}
-                  {formatTime(item.endsAt, item.timeZone)}
-                </p>
-                <p>
-                  Submission cutoff:{' '}
-                  {formatTime(item.submissionClosesAt, item.timeZone)}. Sharing:{' '}
-                  {item.allowSharedMeals ? 'allowed' : 'not allowed'}.
-                </p>
-              </details>
-            </div>
-          ))}
-          {competitions.length > 20 && (
-            <Pager
-              page={page}
-              hasMore={(page + 1) * 20 < competitions.length}
-              change={setPage}
+      {privateMeal && activeSubmissions.length > 0 && (
+        <p role="status" className="form-notice">
+          Saving privately will withdraw existing competition submissions and
+          remove this meal from their activity and totals.
+        </p>
+      )}
+      {!privateMeal && (
+        <>
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={all}
+              onChange={(event) => changeAll(event.target.checked)}
             />
+            Share with all eligible competitions
+          </label>
+          <p role="status">{selected.length} selected</p>
+          {!competitions.length && (
+            <p>No open joined competitions; this meal stays private.</p>
           )}
-        </div>
+          {selected.length > 20 && (
+            <p role="alert">
+              Choose specific competitions to share with at most 20 at a time.
+            </p>
+          )}
+          {!all && (
+            <div role="group" aria-label="Choose competitions">
+              {eligible.map((item) => (
+                <div key={item.id}>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(item.id)}
+                      disabled={
+                        !selected.includes(item.id) && selected.length >= 20
+                      }
+                      onChange={(event) =>
+                        change(
+                          event.target.checked
+                            ? [...selected, item.id]
+                            : selected.filter((id) => id !== item.id),
+                        )
+                      }
+                    />
+                    Submit to {item.name}
+                  </label>
+                  <details>
+                    <summary>Rules and dates for {item.name}</summary>
+                    <p>{item.rules || 'No additional written rules.'}</p>
+                    <p>
+                      {formatTime(item.startsAt, item.timeZone)} to{' '}
+                      {formatTime(item.endsAt, item.timeZone)}
+                    </p>
+                    <p>
+                      Submission cutoff:{' '}
+                      {formatTime(item.submissionClosesAt, item.timeZone)}.
+                      Sharing:{' '}
+                      {item.allowSharedMeals ? 'allowed' : 'not allowed'}.
+                    </p>
+                  </details>
+                </div>
+              ))}
+              {competitions.length > 20 && (
+                <Pager
+                  page={page}
+                  hasMore={(page + 1) * 20 < competitions.length}
+                  change={setPage}
+                />
+              )}
+            </div>
+          )}
+        </>
       )}
     </section>
   )
@@ -366,6 +410,7 @@ function MealForm({
   const [previewTime] = useState(() => new Date().toISOString())
   const [photoIds, setPhotos] = useState(revision?.photoIds ?? [])
   const { connectInput, ...photos } = useMealPhotos(photoIds, setPhotos)
+  const [privateMeal, setPrivateMeal] = useState(initial?.privateMeal ?? false)
   const [allTargets, setAllTargets] = useState(true)
   const [customTargets, setTargets] = useState<string[]>([])
   const competitions = useQuery({
@@ -374,9 +419,11 @@ function MealForm({
   })
   const modes = competitions.data?.map((item) => item.trackingMode) ?? []
   const eligibleIds = competitions.data?.map((item) => item.id) ?? []
-  const targets = allTargets
-    ? eligibleIds
-    : customTargets.filter((id) => eligibleIds.includes(id))
+  const targets = privateMeal
+    ? []
+    : allTargets
+      ? eligibleIds
+      : customTargets.filter((id) => eligibleIds.includes(id))
   const tracksCount =
     modes.length === 0 || modes.some((mode) => mode !== 'LENGTH')
   const tracksLength = includeLength || modes.some((mode) => mode !== 'COUNT')
@@ -440,6 +487,7 @@ function MealForm({
           ...(rows ? {} : { totalHundredths, wholeHotDogs }),
         },
         competitionIds: targets,
+        privateMeal,
       }
       const payload = JSON.stringify(body)
       if (pendingRequest.current?.payload !== payload)
@@ -524,7 +572,10 @@ function MealForm({
             <span className="form-note">
               {targets.length
                 ? `Sharing with ${targets.length} ${targets.length === 1 ? 'competition' : 'competitions'}`
-                : 'Private meal'}
+                : !privateMeal &&
+                    initial?.submissions.some((entry) => !entry.withdrawn)
+                  ? 'Source-only edit; existing competition submissions stay shared'
+                  : 'Private meal'}
             </span>
           }
           revision={preview}
@@ -683,6 +734,9 @@ function MealForm({
         </section>
         {competitions.data && (
           <Targets
+            privateMeal={privateMeal}
+            changePrivacy={setPrivateMeal}
+            submissions={initial?.submissions ?? []}
             all={allTargets}
             changeAll={setAllTargets}
             selected={targets}
@@ -739,7 +793,7 @@ function MealForm({
             Optional; leave both blank to use the save time.
           </p>
         </section>
-        {initial && (
+        {initial && !privateMeal && (
           <p className="form-notice">
             Closed and unselected submissions stay unchanged.
           </p>
@@ -755,7 +809,9 @@ function MealForm({
             !competitions.isSuccess
           }
         >
-          Save meal and selected submissions
+          {privateMeal
+            ? 'Save private meal'
+            : 'Save meal and selected submissions'}
         </button>
         <ErrorNotice error={save.error} />
       </fieldset>
@@ -904,6 +960,11 @@ export function MealPage() {
                 {meal.archived ? ' / Archived' : ''}
               </p>
               <MealSummary revision={meal.revision} />
+              {meal.privateMeal && (
+                <p className="form-notice">
+                  Private meal. Not included in any competition totals.
+                </p>
+              )}
               <section className="competition-section">
                 <h2>Competition snapshots</h2>
                 <p>
