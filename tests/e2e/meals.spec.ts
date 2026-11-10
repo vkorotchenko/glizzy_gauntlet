@@ -70,7 +70,9 @@ async function fillMeal(page: Page, eatenAt = new Date(Date.now() - 3600000)) {
   await page.getByRole('radio', { name: 'Somewhere else' }).check()
   await page.getByLabel('Meal date', { exact: true }).fill(local.slice(0, 10))
   await page.getByLabel('Meal time', { exact: true }).fill(local.slice(11, 16))
-  await page.getByLabel('Private location label').fill('Private picnic')
+  await page
+    .getByLabel('Private location label', { exact: true })
+    .fill('Private picnic')
 }
 async function photo(page: Page) {
   const buffer = await page.screenshot({
@@ -356,6 +358,15 @@ test('shares explicit snapshots, preserves a closed competition, and revokes pho
   try {
     const member = await memberContext.newPage()
     await signIn(member, request, `meal-member-${info.project.name}`)
+    // Keep this feed independent of parallel all-time competition submissions.
+    expect(
+      (
+        await member.request.post(
+          '/api/v1/competitions/00000000-0000-4000-8000-000000000000/leave',
+          { headers: await headers(member) },
+        )
+      ).status(),
+    ).toBe(200)
     await member.goto(a.inviteUrl)
     await member.getByRole('button', { name: 'Accept invitation' }).click()
     await expect(
