@@ -10,10 +10,13 @@ import com.glizzygauntlet.api.auth.AuthException;
 import com.glizzygauntlet.api.auth.MagicLinkService;
 import com.jayway.jsonpath.JsonPath;
 import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
 import java.net.HttpCookie;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -26,7 +29,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.security.web.csrf.CsrfToken;
+import org.springframework.security.web.csrf.HttpSessionCsrfTokenRepository;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -46,6 +52,7 @@ class AuthIntegrationTests {
   @Autowired AccountService accounts;
   @Autowired MagicLinkService links;
   @MockitoBean JavaMailSender mail;
+  @MockitoSpyBean HttpSessionCsrfTokenRepository csrfTokens;
 
   record Browser(Cookie cookie, String csrf) {}
 
@@ -96,6 +103,8 @@ class AuthIntegrationTests {
     assertThat(confirmed.getResponse().getHeaders("Set-Cookie").toString())
         .contains("HttpOnly")
         .contains("SameSite=Lax");
+    mvc.perform(jsonPost(new Browser(signedCookie, before.csrf()), "/api/v1/auth/logout", "{}"))
+        .andExpect(status().isForbidden());
     Browser signed = browser(signedCookie);
     mvc.perform(get("/api/v1/me").cookie(signed.cookie()))
         .andExpect(status().isOk())
@@ -124,6 +133,47 @@ class AuthIntegrationTests {
     mvc.perform(jsonPost(fresh, "/api/v1/auth/magic-links/confirm", tokenBody(token)))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error").value("INVALID_LINK"));
+  }
+
+  @Test
+  void keepsSignedInSessionUsableWhenCsrfRegenerationRequestsOverlap() throws Exception {
+    SignedIn signed = signIn("concurrent-session@example.test");
+    database.update(
+        "DELETE FROM spring_session_attributes WHERE attribute_name = ?",
+        HttpSessionCsrfTokenRepository.class.getName() + ".CSRF_TOKEN");
+    var bothLoaded = new CountDownLatch(2);
+    doAnswer(
+            invocation -> {
+              CsrfToken token = (CsrfToken) invocation.callRealMethod();
+              if (token == null) {
+                bothLoaded.countDown();
+                assertThat(bothLoaded.await(10, TimeUnit.SECONDS)).isTrue();
+              }
+              return token;
+            })
+        .when(csrfTokens)
+        .loadToken(any(HttpServletRequest.class));
+
+    Runnable load =
+        () ->
+            assertThatCode(
+                    () ->
+                        mvc.perform(get("/api/v1/auth/session").cookie(signed.browser().cookie()))
+                            .andExpect(status().isOk())
+                            .andExpect(jsonPath("$.user.id").value(signed.id().toString())))
+                .doesNotThrowAnyException();
+    CompletableFuture.allOf(CompletableFuture.runAsync(load), CompletableFuture.runAsync(load))
+        .get(20, TimeUnit.SECONDS);
+
+    Browser refreshed = browser(signed.browser().cookie());
+    mvc.perform(
+            put("/api/v1/me")
+                .cookie(refreshed.cookie())
+                .header("X-CSRF-TOKEN", refreshed.csrf())
+                .contentType("application/json")
+                .content("{\"displayName\":\"Still signed in\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.displayName").value("Still signed in"));
   }
 
   @Test
