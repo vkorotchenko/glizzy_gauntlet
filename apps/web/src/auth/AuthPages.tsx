@@ -107,7 +107,7 @@ export function SignInPage() {
   const session = useSession()
   const location = useLocation()
   const google = useMutation({ mutationFn: () => startGoogle(false) })
-  if (session.data?.user) return <Navigate to="/account" replace />
+  if (session.data?.user) return <Navigate to="/" replace />
   return (
     <section className="auth-card">
       <span className="eyebrow">Pull up a seat</span>
@@ -176,8 +176,9 @@ export function ConfirmLinkPage() {
   const confirm = useMutation({
     mutationFn: () => confirmLink(token),
     onSuccess: () => {
+      const destination = details.data?.purpose === 'link' ? '/account' : '/'
       resetAccountCache(cache)
-      navigate('/account', { replace: true })
+      navigate(destination, { replace: true })
     },
   })
   return (

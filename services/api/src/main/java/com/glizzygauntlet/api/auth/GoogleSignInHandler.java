@@ -48,7 +48,7 @@ public class GoogleSignInHandler
               ? accounts.findOrCreate("google", user.getSubject(), user.getEmail())
               : accounts.link(intent.linkUserId(), "google", user.getSubject(), user.getEmail());
       sessions.signIn(account.id(), request, response);
-      response.sendRedirect("/account");
+      response.sendRedirect(intent.linkUserId() == null ? "/" : "/account");
     } catch (AuthException rejected) {
       fail(intent, request, response);
     }

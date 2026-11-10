@@ -40,6 +40,8 @@ async function signIn(page: Page, request: APIRequestContext, tag: string) {
   await page.goto(link!)
   await expect(page.getByText(email, { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Confirm sign-in' }).click()
+  await expect(page).toHaveURL('/')
+  await page.getByRole('link', { name: 'My account', exact: true }).click()
   await expect(
     page.getByRole('heading', { name: 'Your account' }),
   ).toBeVisible()

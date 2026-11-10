@@ -38,6 +38,11 @@ test('confirms an email, persists a profile, signs out, and rejects token reuse'
   await expect(page).toHaveURL(/\/sign-in\/confirm$/)
   expect((await page.request.get('/api/v1/me')).status()).toBe(401)
   await page.getByRole('button', { name: 'Confirm sign-in' }).click()
+  await expect(page).toHaveURL('/')
+  await expect(
+    page.getByRole('heading', { name: 'Your feed', exact: true }),
+  ).toBeVisible()
+  await page.getByRole('link', { name: 'My account', exact: true }).click()
   await expect(
     page.getByRole('heading', { name: 'Your account' }),
   ).toBeVisible()
