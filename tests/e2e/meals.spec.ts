@@ -70,7 +70,9 @@ async function fillMeal(page: Page, eatenAt = new Date(Date.now() - 3600000)) {
   await page.getByRole('radio', { name: 'Somewhere else' }).check()
   await page.getByLabel('Meal date', { exact: true }).fill(local.slice(0, 10))
   await page.getByLabel('Meal time', { exact: true }).fill(local.slice(11, 16))
-  await page.getByLabel('Private location label').fill('Private picnic')
+  await page
+    .getByLabel('Private location label', { exact: true })
+    .fill('Private picnic')
 }
 async function photo(page: Page) {
   const buffer = await page.screenshot({
