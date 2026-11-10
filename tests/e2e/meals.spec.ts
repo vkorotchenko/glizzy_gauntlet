@@ -92,7 +92,9 @@ async function photo(page: Page) {
 }
 async function save(page: Page) {
   await page
-    .getByRole('button', { name: 'Save meal and selected submissions' })
+    .getByRole('button', {
+      name: /^Save (private meal|meal and selected submissions)$/,
+    })
     .click()
   await expect(page).toHaveURL(/\/meals\/[a-f0-9-]{36}$/)
   await expect(page.getByRole('heading', { name: 'Meal record' })).toBeVisible()
@@ -106,19 +108,16 @@ test('records exact inches privately, rejects extra precision, and archives with
   request,
 }, info) => {
   await signIn(page, request, `meal-private-${info.project.name}`)
-  const session = (await (
-    await page.request.get('/api/v1/auth/session')
-  ).json()) as { csrfToken: string }
-  expect(
-    (
-      await page.request.post(
-        '/api/v1/competitions/00000000-0000-4000-8000-000000000000/leave',
-        {
-          headers: { 'X-CSRF-TOKEN': session.csrfToken },
-        },
-      )
-    ).status(),
-  ).toBe(200)
+  const competition = (await (
+    await page.request.get(
+      '/api/v1/competitions/00000000-0000-4000-8000-000000000000',
+    )
+  ).json()) as { visibility: string; viewerRole: string }
+  expect(competition).toMatchObject({
+    visibility: 'PUBLIC',
+    viewerRole: expect.any(String),
+  })
+  expect(competition.viewerRole).not.toBe('NONE')
   await fillMeal(page)
   await page.getByLabel('Inches for hot dog 1').fill('9.501')
   await page
@@ -129,7 +128,12 @@ test('records exact inches privately, rejects extra precision, and archives with
   )
   await page.getByLabel('Inches for hot dog 1').fill('9.5')
   const image = await photo(page)
+  await page.getByRole('checkbox', { name: 'Keep this meal private' }).check()
+  await expect(
+    page.getByText(/Private meals are visible only to you and do not count/),
+  ).toContainText('including public competitions and the all-time leaderboard')
   const meal = await save(page)
+  expect(meal.privateMeal).toBe(true)
   expect(new Date(meal.revision.eatenAt).getUTCMinutes() % 15).toBe(0)
   expect(new Date(meal.revision.eatenAt).getUTCSeconds()).toBe(0)
   expect(meal.revision.totalHundredths).toBe(1900)
@@ -138,6 +142,13 @@ test('records exact inches privately, rejects extra precision, and archives with
   await expect(
     page.getByText('Not submitted to any competition.'),
   ).toBeVisible()
+  await page
+    .getByRole('link', { name: 'Edit meal or select submissions' })
+    .click()
+  await expect(
+    page.getByRole('checkbox', { name: 'Keep this meal private' }),
+  ).toBeChecked()
+  await page.goto(`/meals/${meal.id}`)
   expect((await request.get(image)).status()).toBe(401)
   const guest = await browser.newContext({
     baseURL: new URL(page.url()).origin,

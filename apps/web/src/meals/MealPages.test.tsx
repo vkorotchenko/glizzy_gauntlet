@@ -71,6 +71,7 @@ const meal: Meal = {
   id: '00000000-0000-4000-8000-000000000003',
   version: 1,
   archived: false,
+  privateMeal: false,
   revision: {
     id: '00000000-0000-4000-8000-000000000004',
     version: 1,
@@ -474,7 +475,134 @@ describe('meal screens', () => {
     )
   })
 
-  it('allows private edits without withdrawing previously shared snapshots', async () => {
+  it('saves privately while joined to a public competition and remembers that choice when editing', async () => {
+    const saved: Save[] = []
+    let current = meal
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: Request) => {
+        if (request.url.includes('/competitions?'))
+          return Response.json({
+            items: [{ ...competition, visibility: 'PUBLIC' }],
+            hasMore: false,
+          })
+        if (request.method === 'POST' && request.url.endsWith('/meals')) {
+          const body = (await request.json()) as Save
+          saved.push(body)
+          current = { ...meal, privateMeal: body.privateMeal ?? false }
+          return Response.json(current, { status: 201 })
+        }
+        if (request.url.endsWith(`/meals/${meal.id}`))
+          return Response.json(current)
+        return reply(request)
+      }),
+    )
+    show('/meals/new')
+    const privacy = await screen.findByRole('checkbox', {
+      name: 'Keep this meal private',
+    })
+    expect(privacy).not.toBeChecked()
+    fireEvent.click(privacy)
+    expect(
+      screen.getByText(
+        /Private meals are visible only to you and do not count/,
+      ),
+    ).toHaveTextContent(
+      'including public competitions and the all-time leaderboard',
+    )
+    expect(
+      screen.queryByRole('checkbox', {
+        name: 'Share with all eligible competitions',
+      }),
+    ).not.toBeInTheDocument()
+    expect(
+      within(screen.getByRole('article', { name: 'Meal preview' })).getByText(
+        'Private meal',
+      ),
+    ).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Save private meal' }))
+    expect(
+      await screen.findByRole('heading', { name: 'Meal record' }),
+    ).toBeVisible()
+    expect(saved).toHaveLength(1)
+    expect(saved[0]).toMatchObject({
+      privateMeal: true,
+      competitionIds: [],
+    })
+    expect(
+      screen.getByText('Private meal. Not included in any competition totals.'),
+    ).toBeVisible()
+    fireEvent.click(
+      screen.getByRole('link', { name: 'Edit meal or select submissions' }),
+    )
+    expect(
+      await screen.findByRole('checkbox', { name: 'Keep this meal private' }),
+    ).toBeChecked()
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Keep this meal private' }),
+    )
+    expect(
+      screen.getByRole('checkbox', {
+        name: 'Share with all eligible competitions',
+      }),
+    ).toBeChecked()
+  })
+
+  it('explicitly withdraws existing open submissions when saving a shared meal privately', async () => {
+    let body: Save | undefined
+    const shared = {
+      ...meal,
+      submissions: [
+        {
+          competitionId: competition.id,
+          competitionName: competition.name,
+          revisionId: meal.revision.id,
+          totalHundredths: 1900,
+          wholeHotDogs: 2,
+          withdrawn: false,
+          scoreExcluded: false,
+          version: 1,
+          acceptsChanges: true,
+        },
+      ],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: Request) => {
+        if (request.method === 'PUT') {
+          body = (await request.json()) as Save
+          return Response.json({
+            ...shared,
+            privateMeal: true,
+            submissions: shared.submissions.map((entry) => ({
+              ...entry,
+              withdrawn: true,
+            })),
+          })
+        }
+        if (request.url.endsWith(`/meals/${meal.id}`))
+          return Response.json(shared)
+        return reply(request)
+      }),
+    )
+    show(`/meals/${meal.id}/edit`)
+    fireEvent.click(
+      await screen.findByRole('checkbox', {
+        name: 'Keep this meal private',
+      }),
+    )
+    expect(
+      screen.getByText(
+        /Saving privately will withdraw existing competition submissions/,
+      ),
+    ).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Save private meal' }))
+    await waitFor(() =>
+      expect(body).toMatchObject({ privateMeal: true, competitionIds: [] }),
+    )
+  })
+
+  it('allows source-only edits without calling existing shared snapshots private', async () => {
     let body: Save | undefined
     const existing = {
       ...meal,
@@ -505,6 +633,14 @@ describe('meal screens', () => {
       }),
     )
     show(`/meals/${meal.id}/edit`)
+    expect(
+      await screen.findByRole('checkbox', { name: 'Keep this meal private' }),
+    ).toBeDisabled()
+    expect(
+      screen.getByText(
+        /closed or unavailable submissions and cannot be made fully private/,
+      ),
+    ).toBeVisible()
     await customizeSharing()
     expect(
       await screen.findByRole('checkbox', { name: 'Submit to Shared crew' }),
@@ -512,12 +648,19 @@ describe('meal screens', () => {
     expect(
       screen.getByText(/Closed and unselected submissions stay unchanged/),
     ).toBeVisible()
+    expect(
+      within(screen.getByRole('article', { name: 'Meal preview' })).getByText(
+        'Source-only edit; existing competition submissions stay shared',
+      ),
+    ).toBeVisible()
     fireEvent.click(
       screen.getByRole('button', {
         name: 'Save meal and selected submissions',
       }),
     )
-    await waitFor(() => expect(body?.competitionIds).toEqual([]))
+    await waitFor(() =>
+      expect(body).toMatchObject({ privateMeal: false, competitionIds: [] }),
+    )
     expect(
       await screen.findByRole('heading', { name: 'Meal record' }),
     ).toBeVisible()

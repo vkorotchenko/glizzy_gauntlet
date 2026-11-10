@@ -11,6 +11,7 @@ import com.glizzygauntlet.api.competitions.CompetitionService;
 import com.glizzygauntlet.api.meals.MealException;
 import com.glizzygauntlet.api.meals.MealService;
 import com.glizzygauntlet.api.meals.MealService.*;
+import com.glizzygauntlet.api.progress.ProgressService;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
@@ -53,6 +54,7 @@ class MealIntegrationTests {
 
   @Autowired MealService meals;
   @Autowired CompetitionService competitions;
+  @Autowired ProgressService progress;
   @Autowired AccountService accounts;
   @Autowired JdbcTemplate database;
   @Autowired MockMvc mvc;
@@ -552,6 +554,127 @@ class MealIntegrationTests {
         "VERSION_CONFLICT",
         () ->
             meals.withdraw(meal.id(), competition.id(), author, new Change(UUID.randomUUID(), 1L)));
+  }
+
+  @Test
+  void keepsPrivateMealsOutOfPublicAndAllTimeTotalsUntilExplicitlyShared() {
+    var competition = active(true);
+    database.update("UPDATE competitions SET visibility = 'PUBLIC' WHERE id = ?", competition.id());
+    var meal =
+        meals.save(null, author, new Save(UUID.randomUUID(), 0L, content(), List.of(), true));
+
+    assertThat(meal.privateMeal()).isTrue();
+    assertThat(meals.get(meal.id(), author).privateMeal()).isTrue();
+    assertThat(meals.entries(competition.id(), member, 0).items()).isEmpty();
+    assertThat(meals.feed(member, 0).items()).isEmpty();
+    for (UUID id : List.of(competition.id(), CompetitionService.ALL_TIME_ID)) {
+      assertThat(progress.personal(id, author, 0, 0).mealCount()).isZero();
+      assertThat(progress.standings(id, null, 0).items())
+          .allSatisfy(
+              standing -> {
+                assertThat(standing.totalHundredths()).isZero();
+                assertThat(standing.wholeHotDogs()).isZero();
+              });
+    }
+
+    rejected(
+        "PRIVATE_MEAL_TARGETS",
+        () ->
+            meals.save(
+                meal.id(), author, save(meal.version(), content(), List.of(competition.id()))));
+    rejected(
+        "PRIVATE_MEAL_TARGETS",
+        () ->
+            meals.save(
+                null,
+                author,
+                new Save(UUID.randomUUID(), 0L, content(), List.of(competition.id()), true)));
+    assertThat(meals.get(meal.id(), author).version()).isEqualTo(meal.version());
+
+    var shared =
+        meals.save(
+            meal.id(),
+            author,
+            new Save(
+                UUID.randomUUID(),
+                meal.version(),
+                content(),
+                List.of(competition.id(), CompetitionService.ALL_TIME_ID),
+                false));
+    assertThat(shared.privateMeal()).isFalse();
+    assertThat(progress.personal(competition.id(), author, 0, 0).totalHundredths()).isEqualTo(1900);
+    assertThat(progress.personal(CompetitionService.ALL_TIME_ID, author, 0, 0).wholeHotDogs())
+        .isEqualTo(2);
+  }
+
+  @Test
+  void makingASharedMealPrivateAtomicallyWithdrawsOpenSnapshotsAndPhotoAccess() throws Exception {
+    var a = active(true);
+    var b = active(true);
+    var encoded = new ByteArrayOutputStream();
+    ImageIO.write(new BufferedImage(10, 10, BufferedImage.TYPE_INT_RGB), "png", encoded);
+    var photo = meals.upload(author, encoded.toByteArray());
+    var original = content();
+    var withPhoto =
+        new Content(
+            original.eatenAt(), null, "Private lunch", "", original.items(), List.of(photo));
+    var targets = List.of(a.id(), b.id(), CompetitionService.ALL_TIME_ID);
+    var shared = meals.save(null, author, save(0, withPhoto, targets));
+    var request = new Save(UUID.randomUUID(), shared.version(), withPhoto, List.of(), true);
+
+    mvc.perform(
+            put("/api/v1/meals/" + shared.id())
+                .with(as(author))
+                .with(csrf())
+                .contentType("application/json")
+                .content(json.writeValueAsString(request)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.privateMeal").value(true));
+    var saved = meals.save(shared.id(), author, request);
+    assertThat(saved.submissions()).hasSize(3).allMatch(Submission::withdrawn);
+    assertThat(saved.version()).isEqualTo(shared.version() + 1);
+    assertThat(count("competition_entry_events")).isEqualTo(6);
+    assertThat(meals.feed(member, 0).items()).isEmpty();
+    assertThat(meals.feed(author, 0).items()).extracting(FeedItem::id).containsExactly(shared.id());
+    for (UUID id : targets) {
+      assertThat(meals.entries(id, member, 0).items()).isEmpty();
+      var totals = progress.personal(id, author, 0, 0);
+      assertThat(totals.totalHundredths()).isZero();
+      assertThat(totals.wholeHotDogs()).isZero();
+      assertThat(totals.mealCount()).isZero();
+    }
+    mvc.perform(get("/api/v1/meal-photos/" + photo).with(as(member)))
+        .andExpect(status().isNotFound());
+    mvc.perform(get("/api/v1/meal-photos/" + photo).with(as(author))).andExpect(status().isOk());
+
+    var edited = meals.save(saved.id(), author, save(saved.version(), content(), List.of()));
+    assertThat(edited.privateMeal()).isTrue();
+    assertThat(edited.submissions()).allMatch(Submission::withdrawn);
+    assertThat(count("competition_entry_events")).isEqualTo(6);
+  }
+
+  @Test
+  void rejectsMakingAMealPrivateWhenAnySubmissionIsClosedWithoutPartialWithdrawal() {
+    var a = active(true);
+    var b = active(true);
+    var meal = meals.save(null, author, save(0, content(), List.of(a.id(), b.id())));
+    close(b.id());
+
+    rejected(
+        "SUBMISSIONS_CLOSED",
+        () ->
+            meals.save(
+                meal.id(),
+                author,
+                new Save(UUID.randomUUID(), meal.version(), content(), List.of(), true)));
+
+    var unchanged = meals.get(meal.id(), author);
+    assertThat(unchanged.privateMeal()).isFalse();
+    assertThat(unchanged.version()).isEqualTo(meal.version());
+    assertThat(unchanged.submissions()).hasSize(2).noneMatch(Submission::withdrawn);
+    assertThat(count("meal_revisions")).isEqualTo(1);
+    assertThat(count("competition_entry_events")).isEqualTo(2);
+    assertThat(progress.personal(a.id(), author, 0, 0).totalHundredths()).isEqualTo(1900);
   }
 
   @Test
