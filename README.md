@@ -75,7 +75,15 @@ make deploy ENV_FILE=/private/glizzy.env PROD_PROJECT=glizzy-prod
 make deploy-status ENV_FILE=/private/glizzy.env PROD_PROJECT=glizzy-prod
 ```
 
-`make deploy` reruns preflight before starting the base Compose configuration with the public HTTPS profile, never the development override. Preflight failure blocks deployment, but success does not certify DNS, TLS reachability, provider authorization, host capacity, or independent backups. Deployment may apply Flyway migrations; follow the backup and upgrade procedure before upgrading an existing site. `make deploy-logs` uses the same production variables.
+`make deploy` reruns preflight, builds the application images while existing containers remain running, then starts the base Compose configuration with the public HTTPS profile, never the development override. A preflight or build failure blocks container replacement, but success does not certify DNS, TLS reachability, provider authorization, host capacity, or independent backups. Deployment may apply Flyway migrations; follow the backup and upgrade procedure before upgrading an existing site. `make deploy-logs` uses the same production variables.
+
+To update a clean server checkout to the latest `origin/main` (this repository uses `main`, not `master`):
+
+```bash
+make deploy-latest ENV_FILE=/private/glizzy.env PROD_PROJECT=glizzy-prod
+```
+
+This requires the checkout to be on `main`, refuses local changes or commits ahead of/diverged from the remote, fetches and fast-forwards to the selected commit, prints its identity, installs locked Node dependencies, and runs `make deploy`. `DEPLOY_BRANCH=master` selects `origin/master` on a repository that uses that branch instead. It does not check CI or create a backup; complete the [upgrade procedure](ops/README.md#upgrade-and-rollback) first. Building ahead of replacement reduces downtime but **does not make the single-instance stack zero-downtime**.
 
 Backup briefly stops writers. Restore requires a separately prepared, empty project and leaves its writers stopped. Both require explicit project and directory arguments; the existing operations safety checks remain in force:
 

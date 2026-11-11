@@ -160,7 +160,24 @@ After confirming no maintenance process is still running, remove only the displa
 
 Pin and record the application commit/image identities and PostgreSQL major version. Stop writers, create an independent pre-upgrade backup, and verify it before upgrading. Keep base Compose volumes and runtime configuration intact; never use `down --volumes` on a production project as an upgrade step.
 
+After preparing recovery and checking CI for the intended release, run from a clean server checkout on `main`:
+
+```bash
+make deploy-latest ENV_FILE=/private/glizzy.env PROD_PROJECT=glizzy-prod
+make deploy-status ENV_FILE=/private/glizzy.env PROD_PROJECT=glizzy-prod
+```
+
+The target fetches `origin/main`, refuses staged/unstaged/untracked changes and local commits ahead of or diverged from the fetched revision, then fast-forwards the current branch without resetting or discarding files. Detached checkouts and other branches are refused. `DEPLOY_BRANCH` selects another branch if needed; both the checkout and remote must have that branch. The fetched commit is printed before locked Node dependencies are refreshed and the updated Makefile's `deploy` target is invoked. It does not check CI, back up data, update Ubuntu packages, or automatically roll back.
+
+Deployment runs production preflight and builds API/gateway images before replacing containers. If dependency installation, preflight, or image building fails, existing containers are not replaced; the checkout may already contain the new revision. API startup applies migrations and can still fail after replacement, so retain the backup and previous image identities. If writers were stopped for a final backup, leave them stopped until the intended revision is ready.
+
 Flyway applies migrations when the API starts. An application rollback is safe only when the older binary supports the migrated schema. Otherwise restore the pre-upgrade database **and media together into fresh volumes** with its matching application revision, verify privately, then cut over. Do not automatically reverse migrations or mix an old database with newer photo files.
+
+### Downtime boundaries
+
+The current deployment is **not zero-downtime**: there is one gateway and one API, and Compose replaces them before the new instances are ready. Building first keeps a running site available during image compilation, but container replacement, JVM startup, migrations, and consistent backups can still interrupt requests. Budget memory and disk for a build alongside the running stack.
+
+Zero-downtime application updates would require a separately implemented blue/green deployment: start and health-check a second gateway/API pair, switch Caddy routing without stopping the edge, drain in-flight requests, then stop the old pair. Both revisions must support the shared database, sessions, and media; migrations must follow an expand/contract strategy compatible with both versions, and scheduled jobs/storage concurrency must be safe with two APIs running. Merely scaling Compose or switching images cannot guarantee this. PostgreSQL upgrades and the current stop-writers backup procedure need their own availability strategy.
 
 ## Run the disposable recovery rehearsal
 

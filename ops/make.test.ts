@@ -98,6 +98,49 @@ if (command === process.env.FAIL_COMMAND && args.includes(process.env.FAIL_ARGUM
   }
 }
 
+async function deploymentWorkspace(branch = 'main') {
+  const make = await workspace()
+  function git(args: string[], cwd = make.root) {
+    const result = spawnSync(
+      'git',
+      [
+        '-c',
+        'user.name=Deployment Test',
+        '-c',
+        'user.email=deployment@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'core.hooksPath=/dev/null',
+        ...args,
+      ],
+      { cwd, encoding: 'utf8', timeout: 10000 },
+    )
+    expect(result.status, result.stderr).toBe(0)
+    return result.stdout.trim()
+  }
+  await writeFile(
+    join(make.root, '.gitignore'),
+    '/bin/\n/commands.jsonl\n/record.cjs\n/origin.git/\n/publisher/\n',
+  )
+  git(['init', '--quiet', '--initial-branch', branch])
+  git(['add', 'Makefile', '.gitignore'])
+  git(['commit', '--quiet', '-m', 'Initial deployment'])
+  const previous = git(['rev-parse', 'HEAD'])
+  const origin = join(make.root, 'origin.git')
+  git(['init', '--quiet', '--bare', origin])
+  git(['remote', 'add', 'origin', origin])
+  git(['push', '--quiet', 'origin', branch])
+  const publisher = join(make.root, 'publisher')
+  git(['clone', '--quiet', '--branch', branch, origin, publisher])
+  await writeFile(join(publisher, 'release.txt'), 'new release\n')
+  git(['add', 'release.txt'], publisher)
+  git(['commit', '--quiet', '-m', 'Next release'], publisher)
+  git(['push', '--quiet', 'origin', branch], publisher)
+  const latest = git(['rev-parse', 'HEAD'], publisher)
+  return { ...make, git, previous, latest }
+}
+
 describe('Make command safety and orchestration', () => {
   it('defaults to help without installing, deploying, or contacting providers', async () => {
     const make = await workspace()
@@ -128,15 +171,20 @@ describe('Make command safety and orchestration', () => {
     },
   )
 
-  it.each([false, true])(
-    'gates parallel production deployment on preflight (failure: %s)',
-    async (fail) => {
+  it.each(['none', 'preflight', 'build', 'up'])(
+    'builds before replacing production containers and stops on failure (%s)',
+    async (failure) => {
       const make = await workspace()
       const config = '/private/config with spaces.env'
       const result = make.run(
         'deploy',
         [`ENV_FILE=${config}`, 'PROD_PROJECT=release-test'],
-        fail ? { FAIL_COMMAND: 'npm', FAIL_ARGUMENT: 'preflight' } : {},
+        failure === 'none'
+          ? {}
+          : {
+              FAIL_COMMAND: failure === 'preflight' ? 'npm' : 'docker',
+              FAIL_ARGUMENT: failure,
+            },
       )
       const calls = await make.calls()
       expect(calls[0].args).toEqual([
@@ -147,12 +195,13 @@ describe('Make command safety and orchestration', () => {
         '--env-file',
         config,
       ])
-      if (fail) {
+      if (failure === 'preflight') {
         expect(result.status).not.toBe(0)
         expect(calls.map((call) => call.command)).toEqual(['npm'])
       } else {
-        expect(result.status, result.stderr).toBe(0)
-        expect(calls.map((call) => call.command)).toEqual(['npm', 'docker'])
+        expect(calls.map((call) => call.command)).toEqual(
+          failure === 'build' ? ['npm', 'docker'] : ['npm', 'docker', 'docker'],
+        )
         expect(calls[1].args).toEqual([
           'compose',
           '--project-name',
@@ -163,14 +212,114 @@ describe('Make command safety and orchestration', () => {
           'infra/compose.yaml',
           '--profile',
           'public',
-          'up',
-          '--build',
-          '--detach',
-          '--wait',
+          'build',
+          'api',
+          'gateway',
         ])
+        if (failure !== 'build')
+          expect(calls[2].args).toEqual([
+            ...calls[1].args.slice(0, -3),
+            'up',
+            '--no-build',
+            '--detach',
+            '--wait',
+          ])
       }
+      if (failure === 'none') expect(result.status, result.stderr).toBe(0)
+      else expect(result.status).not.toBe(0)
     },
   )
+
+  it.each(['main', 'master'])(
+    'deploys the fetched %s commit in order, preserving production overrides',
+    async (branch) => {
+      const make = await deploymentWorkspace(branch)
+      const config = '/private/config with spaces.env'
+      const result = make.run('deploy-latest', [
+        ...(branch === 'main' ? [] : [`DEPLOY_BRANCH=${branch}`]),
+        `ENV_FILE=${config}`,
+        'PROD_PROJECT=release-test',
+      ])
+      expect(result.status, result.stderr).toBe(0)
+      expect(make.git(['rev-parse', 'HEAD'])).toBe(make.latest)
+      expect(make.git(['branch', '--show-current'])).toBe(branch)
+      expect(result.stdout).toContain(make.latest)
+      const calls = await make.calls()
+      expect(
+        calls.map((call) => [call.command, ...call.args.slice(0, 3)]),
+      ).toEqual([
+        ['npm', 'ci'],
+        ['npm', 'run', 'ops', '--'],
+        ['docker', 'compose', '--project-name', 'release-test'],
+        ['docker', 'compose', '--project-name', 'release-test'],
+      ])
+      expect(calls[1].args).toContain(config)
+      for (const call of calls.slice(2)) expect(call.args).toContain(config)
+      expect(calls[2].args.slice(-3)).toEqual(['build', 'api', 'gateway'])
+      expect(calls[3].args.slice(-4)).toEqual([
+        'up',
+        '--no-build',
+        '--detach',
+        '--wait',
+      ])
+    },
+  )
+
+  it.each(['tracked', 'staged', 'untracked'])(
+    'refuses a %s change without updating or deploying the checkout',
+    async (change) => {
+      const make = await deploymentWorkspace()
+      await writeFile(
+        join(make.root, change === 'untracked' ? 'local.txt' : 'Makefile'),
+        '# local changes\n',
+        { flag: 'a' },
+      )
+      if (change === 'staged') make.git(['add', 'Makefile'])
+      const result = make.run('deploy-latest')
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain('clean checkout')
+      expect(make.git(['rev-parse', 'HEAD'])).toBe(make.previous)
+      expect(await make.calls()).toEqual([])
+    },
+  )
+
+  it.each(['branch', 'detached', 'ahead', 'diverged', 'fetch'])(
+    'refuses an unsafe or unavailable source (%s) before installing or deploying',
+    async (state) => {
+      const make = await deploymentWorkspace()
+      if (state === 'branch') make.git(['switch', '-c', 'other'])
+      if (state === 'detached') make.git(['checkout', '--detach'])
+      if (state === 'fetch')
+        make.git(['remote', 'set-url', 'origin', join(make.root, 'missing')])
+      if (state === 'ahead' || state === 'diverged') {
+        if (state === 'ahead') {
+          make.git(['fetch', '--quiet', 'origin', 'main'])
+          make.git(['merge', '--ff-only', 'FETCH_HEAD'])
+        }
+        await writeFile(join(make.root, 'local.txt'), 'local commit\n')
+        make.git(['add', 'local.txt'])
+        make.git(['commit', '--quiet', '-m', 'Local-only change'])
+      }
+      const before = make.git(['rev-parse', 'HEAD'])
+      const result = make.run('deploy-latest')
+      expect(result.status).not.toBe(0)
+      expect(make.git(['rev-parse', 'HEAD'])).toBe(before)
+      expect(await make.calls()).toEqual([])
+    },
+  )
+
+  it('does not deploy if refreshed dependencies fail to install', async () => {
+    const make = await deploymentWorkspace()
+    const result = make.run('deploy-latest', [], {
+      FAIL_COMMAND: 'npm',
+      FAIL_ARGUMENT: 'ci',
+    })
+    expect(result.status).not.toBe(0)
+    expect(make.git(['rev-parse', 'HEAD'])).toBe(make.latest)
+    expect(await make.calls()).toEqual([
+      { command: 'npm', args: ['ci'], cwd: make.root },
+    ])
+  })
 
   it('stops only the selected local stack without deleting its volumes', async () => {
     const make = await workspace()

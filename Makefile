@@ -4,6 +4,7 @@ SHELL := /bin/sh
 ENV_FILE ?= .env
 PROJECT ?= glizzy-gauntlet
 PROD_PROJECT ?= glizzy-prod
+DEPLOY_BRANCH ?= main
 MVN ?= ./mvnw
 ARGS ?=
 WORKFLOW ?= ci.yml
@@ -18,7 +19,7 @@ PROD_COMPOSE = docker compose --project-name "$(PROD_PROJECT)" --env-file "$(ENV
 
 .PHONY: help install dev watch dev-host dev-api build build-js build-api images \
 	up down status logs check lint typecheck format api-generate api-check \
-	test test-api browser-install test-e2e test-recovery ci preflight deploy \
+	test test-api browser-install test-e2e test-recovery ci preflight deploy deploy-latest \
 	deploy-status deploy-logs backup restore ci-run ci-runs ci-watch ci-logs \
 	ci-rerun require-backup-args require-run-id
 
@@ -105,7 +106,18 @@ preflight: ## Check production configuration; does not certify external readines
 	npm run ops -- preflight --env-file "$(ENV_FILE)"
 
 deploy: preflight ## Build and deploy the public stack only after preflight passes
-	$(PROD_COMPOSE) up --build --detach --wait
+	$(PROD_COMPOSE) build api gateway
+	$(PROD_COMPOSE) up --no-build --detach --wait
+
+deploy-latest: ## Fast-forward a clean checkout to origin/main, install, and deploy
+	@test "$$(git branch --show-current)" = "$(DEPLOY_BRANCH)" || { printf '%s\n' 'Switch to DEPLOY_BRANCH before deploying; detached checkouts are refused.' >&2; exit 2; }
+	@status="$$(git status --porcelain --untracked-files=normal)" && test -z "$$status" || { printf '%s\n' 'Deployment requires a clean checkout, including untracked files.' >&2; exit 2; }
+	git fetch --no-tags origin "refs/heads/$(DEPLOY_BRANCH)"
+	@git merge-base --is-ancestor HEAD FETCH_HEAD || { printf '%s\n' 'Local commits are ahead of or diverged from the fetched branch; deployment refused.' >&2; exit 2; }
+	git merge --ff-only FETCH_HEAD
+	@git rev-parse HEAD
+	$(MAKE) install
+	$(MAKE) deploy
 
 deploy-status: ## Show production stack services
 	$(PROD_COMPOSE) ps
